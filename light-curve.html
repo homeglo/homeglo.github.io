@@ -2,136 +2,162 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Adaptive Lighting – 24 h Curve Explorer</title>
+<title>Adaptive Lighting – Pipeline Explorer</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
   body{font-family:sans-serif;margin:1.5rem;}
   h2{margin-top:0}
-  #controls{display:grid;grid-template-columns:220px 1fr 50px;gap:6px;align-items:center;margin-bottom:1.5rem}
+  .controls{display:grid;grid-template-columns:220px 1fr 45px;
+            gap:6px;align-items:center;margin-bottom:1rem}
   input[type=range]{width:100%}
   label{font-size:.85rem}
+  .stage{margin:1.75rem 0}
+  .divider{font-size:2rem;text-align:center;margin:0.5rem 0}
 </style>
 </head>
 <body>
-<h2>Adaptive Lighting – 24 h Curve Explorer</h2>
-<p>Move the sliders; colour-temperature and brightness update live over a full 24-hour cycle.</p>
+<h2>Adaptive Lighting – Pipeline Explorer</h2>
 
-<div id="controls"></div>
-<div id="plot"></div>
+<!-- STAGE 0 CONTROLS -------------------------------------------------->
+<h3>Stage 0 • Base curve</h3>
+<div id="ctrl-base" class="controls"></div>
+
+<div id="plot0" class="stage"></div>
+
+<div class="divider">↓</div>
+
+<!-- STAGE 1 CONTROLS -------------------------------------------------->
+<h3>Stage 1 • Lux filter</h3>
+<div id="ctrl-lux" class="controls"></div>
+
+<div id="plot1" class="stage"></div>
+
+<div class="divider">↓</div>
+
+<!-- STAGE 2 (no controls) ------------------------------------------->
+<h3>Stage 2 • Final (future filters)</h3>
+<div id="plot2" class="stage"></div>
 
 <script>
 // -------------------------------------------------------------------
-// Parameter defs & slider metadata
+// Parameters (gamma default = 2)
 // -------------------------------------------------------------------
-const params = {
-  min_color_temp: 2000,
-  max_color_temp: 6500,
-  min_brightness: 1,
-  max_brightness: 100,
-  lux: 1000,
-  min_lux: 10,
-  max_lux: 6000,
-  lux_color_weight: 0.1,
-  lux_brightness_k: 7,
-  lux_brightness_m: 0.4,
-  gamma: 2            // colour-temperature gamma
+const params={
+  /* base-curve */
+  min_color_temp:2000,max_color_temp:6500,
+  min_brightness:1,max_brightness:100,
+  gamma:2,
+
+  /* lux */
+  lux:1000,min_lux:10,max_lux:6000,
+  lux_color_weight:0.1,
+  lux_brightness_k:7,lux_brightness_m:0.4
 };
-const sliders = [
-  ['min_color_temp',  1000, 2000, 4000, 100],
-  ['max_color_temp',  4000, 6500, 9000, 100],
-  ['min_brightness',     0,    1,   50,   1],
-  ['max_brightness',    50,  100,  100,   1],
-  ['lux',                0, 1000,10000,  50],
-  ['lux_color_weight',   0,  0.1,    1,0.01],
-  ['lux_brightness_k',   1,    7,   15, 0.1],
-  ['lux_brightness_m',   0,  0.4,    1,0.01],
-  ['gamma',            0.2,    2,    3, 0.1]
+
+// Slider definitions per panel
+const baseSliders=[
+  //['min_color_temp',1000,2000,4000,100],
+  //['max_color_temp',4000,6500,9000,100],
+  //['min_brightness',0,1,50,1],
+  //['max_brightness',50,100,100,1],
+  ['gamma',0.2,1,3,0.1]
+];
+const luxSliders=[
+  ['lux',0,1000,10000,50],
+  ['lux_color_weight',0,0.1,1,0.01],
+  ['lux_brightness_k',1,7,15,0.1],
+  ['lux_brightness_m',0,0.4,1,0.01]
 ];
 
-// -------------------------------------------------------------------
-// Build UI
-// -------------------------------------------------------------------
-const wrap = tag => document.createElement(tag);
-const controls = document.getElementById('controls');
-sliders.forEach(([key,min,val,max,step])=>{
-  const label = wrap('label');
-  label.textContent = key;
-  const range = wrap('input');
-  range.type='range'; range.min=min; range.max=max;
-  range.step=step; range.value=val;
-  const out = wrap('span'); out.textContent=val;
-  range.oninput = e=>{
-    params[key]=parseFloat(e.target.value);
-    out.textContent=e.target.value;
-    draw();
-  };
-  controls.append(label,range,out);
-  params[key]=val;
-});
+// Build a slider panel
+function makePanel(containerId,sliderDefs){
+  const wrap=t=>document.createElement(t);
+  const panel=document.getElementById(containerId);
+  sliderDefs.forEach(([key,min,val,max,step])=>{
+    const lab=wrap('label'); lab.textContent=key;
+    const rng=wrap('input');
+    rng.type='range'; rng.min=min; rng.max=max; rng.step=step; rng.value=val;
+    const out=wrap('span'); out.textContent=val;
+    rng.oninput=e=>{params[key]=parseFloat(e.target.value);
+                    out.textContent=e.target.value; draw();};
+    panel.append(lab,rng,out);
+    params[key]=val;
+  });
+}
+makePanel('ctrl-base',baseSliders);
+makePanel('ctrl-lux',luxSliders);
 
 // -------------------------------------------------------------------
-// Math helpers (JS ports of Python)
+// Math helpers (same as prod)
 // -------------------------------------------------------------------
-function colorTemp(pos,minC,maxC,gamma){
-  let t = (pos + 1) * 0.5;           // 0..1
-  if (gamma !== 1) t = Math.pow(t, gamma);
-  const s = t*t*(3 - 2*t);           // smooth-step
-  return minC + s * (maxC - minC);
+function colorTemp(pos,min,max,g){
+  let t=(pos+1)*0.5; if(g!==1)t=t**g;
+  const s=t*t*(3-2*t); return min+s*(max-min);
 }
-function brightness(pos,minB,maxB){
-  const t = (pos + 1) * 0.5;
-  const s = t*t*(3 - 2*t);
-  return minB + s * (maxB - minB);
+function brightness(pos,min,max){
+  const t=(pos+1)*0.5, s=t*t*(3-2*t); return min+s*(max-min);
 }
-function luxNorm(lux,minL,maxL,gamma=0.6){
-  lux = Math.max(minL, Math.min(maxL, lux));
-  const ln = (Math.log10(lux) - Math.log10(minL)) /
-             (Math.log10(maxL) - Math.log10(minL));
-  return Math.pow(ln, gamma);
+function luxNorm(lux,min,max,g=0.6){
+  lux=Math.max(min,Math.min(max,lux));
+  const ln=(Math.log10(lux)-Math.log10(min))/(Math.log10(max)-Math.log10(min));
+  return ln**g;
 }
 function applyLux(cct,bri,lux,p){
   if(isNaN(lux)) return [cct,bri];
-  const ln = luxNorm(lux,p.min_lux,p.max_lux);
-  const bFactor = 1 / (1 + Math.exp(p.lux_brightness_k * (ln - p.lux_brightness_m)));
-  const newB = Math.max(p.min_brightness,
-                        Math.min(p.max_brightness, bri * bFactor));
-  const span = p.max_color_temp - p.min_color_temp;
-  const newC = Math.max(p.min_color_temp,
-                        Math.min(p.max_color_temp,
-                                 cct + span * (ln - 0.5) * p.lux_color_weight));
-  return [newC,newB];
+  const ln=luxNorm(lux,p.min_lux,p.max_lux);
+  const bf=1/(1+Math.exp(p.lux_brightness_k*(ln-p.lux_brightness_m)));
+  const bri2=Math.round(Math.max(p.min_brightness,
+                      Math.min(p.max_brightness,bri*bf)));
+  const span=p.max_color_temp-p.min_color_temp;
+  const cct2=Math.round(Math.max(p.min_color_temp,
+                     Math.min(p.max_color_temp,
+                              cct+span*(ln-0.5)*p.lux_color_weight)));
+  return [cct2,bri2];
 }
-
-// Time → position: pos = –cos(2π t / 24)
-const timeToPos = h => -Math.cos((2*Math.PI*h)/24);
+const timeToPos=h=>-Math.cos((2*Math.PI*h)/24);
 
 // -------------------------------------------------------------------
-// Plot
+// Pipeline computation + plotting
 // -------------------------------------------------------------------
 function compute(){
-  const h=[],cct=[],bri=[],cctAdj=[],briAdj=[];
-  for(let t=0; t<=24; t+=0.1){
-    const pos = timeToPos(t);
-    const baseC = colorTemp(pos,params.min_color_temp,params.max_color_temp,params.gamma);
-    const baseB = brightness(pos,params.min_brightness,params.max_brightness);
-    const [adjC,adjB] = applyLux(baseC,baseB,params.lux,params);
-    h.push(t); cct.push(baseC); bri.push(baseB); cctAdj.push(adjC); briAdj.push(adjB);
+  const h=[],c0=[],b0=[],c1=[],b1=[],c2=[],b2=[];
+  for(let t=0;t<=24;t+=0.1){
+    const pos=timeToPos(t);
+
+    // Stage 0
+    const baseC=colorTemp(pos,params.min_color_temp,params.max_color_temp,params.gamma);
+    const baseB=brightness(pos,params.min_brightness,params.max_brightness);
+
+    // Stage 1
+    const [luxC,luxB]=applyLux(baseC,baseB,params.lux,params);
+
+    // Stage 2 (placeholder)
+    const finC=luxC, finB=luxB;
+
+    h.push(t); c0.push(baseC); b0.push(baseB);
+    c1.push(luxC); b1.push(luxB);
+    c2.push(finC); b2.push(finB);
   }
-  return {h,cct,bri,cctAdj,briAdj};
+  return{h,c0,b0,c1,b1,c2,b2};
 }
-function draw(){
-  const {h,cct,bri,cctAdj,briAdj} = compute();
-  Plotly.newPlot('plot',[
-    {x:h,y:cct    ,name:'CCT base (K)',   yaxis:'y1',type:'scatter'},
-    {x:h,y:cctAdj ,name:'CCT adjusted',   yaxis:'y1',type:'scatter'},
-    {x:h,y:bri    ,name:'Brightness base (%)',   yaxis:'y2',type:'scatter'},
-    {x:h,y:briAdj ,name:'Brightness adjusted (%)',yaxis:'y2',type:'scatter'}
+
+function plot(divId,x,cct,bri,title){
+  Plotly.newPlot(divId,[
+    {x,y:cct,name:'CCT (K)',yaxis:'y1'},
+    {x,y:bri,name:'Brightness (%)',yaxis:'y2'}
   ],{
-    title:'Adaptive-Lighting Curves over 24 h',
-    xaxis:{title:'Time of Day (hours)',range:[0,24]},
-    yaxis:{title:'Colour Temperature (K)'},
+    title,
+    xaxis:{title:'Time of Day (h)',range:[0,24]},
+    yaxis:{title:'Colour Temp (K)'},
     yaxis2:{title:'Brightness (%)',overlaying:'y',side:'right',range:[0,100]}
   },{responsive:true});
+}
+
+function draw(){
+  const {h,c0,b0,c1,b1,c2,b2}=compute();
+  plot('plot0',h,c0,b0,'Stage 0 – Base curve');
+  plot('plot1',h,c1,b1,'Stage 1 – After lux');
+  //plot('plot2',h,c2,b2,'Stage 2 – Final (future filters)');
 }
 draw();
 </script>
