@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Adaptive Lighting – Pipeline Explorer</title>
+<title>Adaptive Lighting – Pipeline Explorer (fixed-scale)</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
   body{font-family:sans-serif;margin:1.5rem;}
@@ -27,7 +27,7 @@
 <div class="divider">↓</div>
 
 <!-- STAGE 1 CONTROLS -------------------------------------------------->
-<h3>Stage 1 • Lux filter</h3>
+<h3>Stage 1 • Lux filter (new γ curves)</h3>
 <div id="ctrl-lux" class="controls"></div>
 
 <div id="plot1" class="stage"></div>
@@ -40,7 +40,7 @@
 
 <script>
 // -------------------------------------------------------------------
-// Parameters (gamma default = 2)
+// Parameters (defaults)
 // -------------------------------------------------------------------
 const params={
   /* base-curve */
@@ -50,26 +50,21 @@ const params={
 
   /* lux */
   lux:1000,min_lux:10,max_lux:6000,
-  lux_color_weight:0.1,
-  lux_brightness_k:7,lux_brightness_m:0.4
+  gamma_bri:1.4,   // inverse-gamma for brightness dimming
+  gamma_cct:1.0    // gamma for CCT smooth-step
 };
 
-// Slider definitions per panel
+// Slider definitions per panel  [key, min, val, max, step]
 const baseSliders=[
-  //['min_color_temp',1000,2000,4000,100],
-  //['max_color_temp',4000,6500,9000,100],
-  //['min_brightness',0,1,50,1],
-  //['max_brightness',50,100,100,1],
-  ['gamma',0.2,1,3,0.1]
+  ['gamma',0.2,2,3,0.1]
 ];
 const luxSliders=[
   ['lux',0,1000,10000,50],
-  ['lux_color_weight',0,0.1,1,0.01],
-  ['lux_brightness_k',1,7,15,0.1],
-  ['lux_brightness_m',0,0.4,1,0.01]
+  ['gamma_bri',0.5,1.4,3,0.1],
+  ['gamma_cct',0.3,1,2,0.05]
 ];
 
-// Build a slider panel
+// Build a slider panel ------------------------------------------------
 function makePanel(containerId,sliderDefs){
   const wrap=t=>document.createElement(t);
   const panel=document.getElementById(containerId);
@@ -88,32 +83,41 @@ makePanel('ctrl-base',baseSliders);
 makePanel('ctrl-lux',luxSliders);
 
 // -------------------------------------------------------------------
-// Math helpers (same as prod)
+// Math helpers (same as prod, updated lux maths)
 // -------------------------------------------------------------------
+function smoothstep(x){return x*x*(3-2*x);}  // cubic 0→1
+
 function colorTemp(pos,min,max,g){
   let t=(pos+1)*0.5; if(g!==1)t=t**g;
-  const s=t*t*(3-2*t); return min+s*(max-min);
+  const s=smoothstep(t);
+  return min+s*(max-min);
 }
-function brightness(pos,min,max){
-  const t=(pos+1)*0.5, s=t*t*(3-2*t); return min+s*(max-min);
+function brightnessBase(pos,min,max){
+  const t=(pos+1)*0.5; const s=smoothstep(t);
+  return min+s*(max-min);
 }
-function luxNorm(lux,min,max,g=0.6){
-  lux=Math.max(min,Math.min(max,lux));
-  const ln=(Math.log10(lux)-Math.log10(min))/(Math.log10(max)-Math.log10(min));
-  return ln**g;
+
+// Linear normalisation of lux (0→1, clamped)
+function luxNorm(lux,min,max){
+  return Math.max(0, Math.min(1, (lux-min)/(max-min)));
 }
+
+// Apply new lux formula: inverse-gamma brightness + smooth-step CCT
 function applyLux(cct,bri,lux,p){
   if(isNaN(lux)) return [cct,bri];
   const ln=luxNorm(lux,p.min_lux,p.max_lux);
-  const bf=1/(1+Math.exp(p.lux_brightness_k*(ln-p.lux_brightness_m)));
-  const bri2=Math.round(Math.max(p.min_brightness,
-                      Math.min(p.max_brightness,bri*bf)));
-  const span=p.max_color_temp-p.min_color_temp;
-  const cct2=Math.round(Math.max(p.min_color_temp,
-                     Math.min(p.max_color_temp,
-                              cct+span*(ln-0.5)*p.lux_color_weight)));
+
+  // Brightness factor (1→0 as lux rises)
+  const briFactor=1-Math.pow(ln,p.gamma_bri);
+  const bri2=Math.round(p.min_brightness + briFactor*(bri - p.min_brightness));
+
+  // CCT mapping
+  const t=smoothstep(ln);
+  const cct2=Math.round(p.min_color_temp + Math.pow(t,p.gamma_cct)*(p.max_color_temp - p.min_color_temp));
+
   return [cct2,bri2];
 }
+
 const timeToPos=h=>-Math.cos((2*Math.PI*h)/24);
 
 // -------------------------------------------------------------------
@@ -126,9 +130,9 @@ function compute(){
 
     // Stage 0
     const baseC=colorTemp(pos,params.min_color_temp,params.max_color_temp,params.gamma);
-    const baseB=brightness(pos,params.min_brightness,params.max_brightness);
+    const baseB=brightnessBase(pos,params.min_brightness,params.max_brightness);
 
-    // Stage 1
+    // Stage 1 (lux filter)
     const [luxC,luxB]=applyLux(baseC,baseB,params.lux,params);
 
     // Stage 2 (placeholder)
@@ -143,13 +147,14 @@ function compute(){
 
 function plot(divId,x,cct,bri,title){
   Plotly.newPlot(divId,[
-    {x,y:cct,name:'CCT (K)',yaxis:'y1'},
-    {x,y:bri,name:'Brightness (%)',yaxis:'y2'}
+    {x,y:cct,name:'CCT (K)',yaxis:'y1',line:{shape:'spline'}},
+    {x,y:bri,name:'Brightness (%)',yaxis:'y2',line:{shape:'spline'}}
   ],{
     title,
     xaxis:{title:'Time of Day (h)',range:[0,24]},
-    yaxis:{title:'Colour Temp (K)'},
-    yaxis2:{title:'Brightness (%)',overlaying:'y',side:'right',range:[0,100]}
+    // **FIXED SCALE** for CCT so the axis no longer rescales on slider moves
+    yaxis:{title:'Colour Temp (K)',range:[params.min_color_temp, params.max_color_temp],autorange:false},
+    yaxis2:{title:'Brightness (%)',overlaying:'y',side:'right',range:[0,100],autorange:false}
   },{responsive:true});
 }
 
@@ -157,8 +162,9 @@ function draw(){
   const {h,c0,b0,c1,b1,c2,b2}=compute();
   plot('plot0',h,c0,b0,'Stage 0 – Base curve');
   plot('plot1',h,c1,b1,'Stage 1 – After lux');
-  //plot('plot2',h,c2,b2,'Stage 2 – Final (future filters)');
+  // Future stages can be plotted similarly using c2/b2 etc.
 }
+
 draw();
 </script>
 </body>
