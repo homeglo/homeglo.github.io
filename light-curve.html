@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Adaptive Lighting Curve Explorer</title>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<style>
+  body{font-family:sans-serif;margin:1.5rem;}
+  h2{margin-top:0}
+  #controls{display:grid;grid-template-columns:220px 1fr 50px;gap:6px;align-items:center;margin-bottom:1.5rem}
+  input[type=range]{width:100%}
+  label{font-size:.85rem}
+</style>
+</head>
+<body>
+<h2>Adaptive Lighting Curve Explorer</h2>
+<p>Adjust the parameters; the colour-temperature (K) and brightness (%) curves update live.</p>
+
+<div id="controls"></div>
+<div id="plot"></div>
+
+<script>
+// -------------------------------------------------------------------
+// Parameter defs & slider metadata
+// -------------------------------------------------------------------
+const params = {
+  min_color_temp: 2000,
+  max_color_temp: 6500,
+  min_brightness: 1,
+  max_brightness: 100,
+  lux: 1000,
+  min_lux: 10,
+  max_lux: 6000,
+  lux_color_weight: 0.1,
+  lux_brightness_k: 7,
+  lux_brightness_m: 0.4,
+  gamma: 2            // colour-temperature gamma
+};
+const sliders = [
+  ['min_color_temp',  1000, 2000, 4000, 100],
+  ['max_color_temp',  4000, 6500, 9000, 100],
+  ['min_brightness',     0,    1,   50,   1],
+  ['max_brightness',    50,  100,  100,   1],
+  ['lux',                0, 1000,10000,  50],
+  ['lux_color_weight',   0,  0.1,    1,0.01],
+  ['lux_brightness_k',   1,    7,   15, 0.1],
+  ['lux_brightness_m',   0,  0.4,    1,0.01],
+  ['gamma',            0.2,    2,    3, 0.1]
+];
+
+// -------------------------------------------------------------------
+// Build UI
+// -------------------------------------------------------------------
+const wrap = tag => document.createElement(tag);
+const controls = document.getElementById('controls');
+sliders.forEach(([key,min,val,max,step])=>{
+  const label = wrap('label');
+  label.textContent = key;
+  const range = wrap('input');
+  range.type='range'; range.min=min; range.max=max;
+  range.step=step; range.value=val;
+  const out = wrap('span'); out.textContent=val;
+  range.oninput = e=>{
+    params[key]=parseFloat(e.target.value);
+    out.textContent=e.target.value;
+    draw();
+  };
+  controls.append(label,range,out);
+  params[key]=val;
+});
+
+// -------------------------------------------------------------------
+// Math helpers (JS ports of your Python)
+// -------------------------------------------------------------------
+
+// Colour-temperature: already latest (cubic smooth-step with gamma)
+function colorTemp(pos,minC,maxC,gamma){
+  let t = (pos + 1) * 0.5;           // map −1 … 1 → 0 … 1
+  if (gamma !== 1) t = Math.pow(t, gamma);
+  const s = t*t*(3 - 2*t);           // smooth-step
+  return minC + s * (maxC - minC);
+}
+
+// NEW brightness curve – cubic smooth-step instead of hard 100 %/linear
+function brightness(pos,minB,maxB){
+  const t = (pos + 1) * 0.5;         // 0 at night, 1 at noon
+  const s = t*t*(3 - 2*t);           // smooth-step easing
+  return minB + s * (maxB - minB);
+}
+
+function luxNorm(lux,minL,maxL,gamma=0.6){
+  lux = Math.max(minL, Math.min(maxL, lux));
+  const ln = (Math.log10(lux) - Math.log10(minL)) /
+             (Math.log10(maxL) - Math.log10(minL));
+  return Math.pow(ln, gamma);
+}
+function applyLux(cct,bri,lux,p){
+  if(isNaN(lux)) return [cct,bri];
+  const ln = luxNorm(lux,p.min_lux,p.max_lux);
+  const bFactor = 1 / (1 + Math.exp(p.lux_brightness_k * (ln - p.lux_brightness_m)));
+  const newB = Math.max(p.min_brightness,
+                        Math.min(p.max_brightness, bri * bFactor));
+  const span = p.max_color_temp - p.min_color_temp;
+  const newC = Math.max(p.min_color_temp,
+                        Math.min(p.max_color_temp,
+                                 cct + span * (ln - 0.5) * p.lux_color_weight));
+  return [newC,newB];
+}
+
+// -------------------------------------------------------------------
+// Plot
+// -------------------------------------------------------------------
+function compute(){
+  const xs=[],cct=[],bri=[],cctAdj=[],briAdj=[];
+  for(let i=0;i<=200;i++){
+    const pos = i/100 - 1;           // −1 … +1
+    const baseC = colorTemp(pos,params.min_color_temp,params.max_color_temp,params.gamma);
+    const baseB = brightness(pos,params.min_brightness,params.max_brightness);
+    const [adjC,adjB] = applyLux(baseC,baseB,params.lux,params);
+    xs.push(pos); cct.push(baseC); bri.push(baseB); cctAdj.push(adjC); briAdj.push(adjB);
+  }
+  return {xs,cct,bri,cctAdj,briAdj};
+}
+function draw(){
+  const {xs,cct,bri,cctAdj,briAdj} = compute();
+  Plotly.newPlot('plot',[
+    {x:xs,y:cct    ,name:'CCT base (K)',   yaxis:'y1',type:'scatter'},
+    {x:xs,y:cctAdj ,name:'CCT adjusted',   yaxis:'y1',type:'scatter'},
+    {x:xs,y:bri    ,name:'Brightness base (%)',   yaxis:'y2',type:'scatter'},
+    {x:xs,y:briAdj ,name:'Brightness adjusted (%)',yaxis:'y2',type:'scatter'}
+  ],{
+    title:'Adaptive-Lighting Curves',
+    xaxis:{title:'Sun Position (–1 night → +1 noon)'},
+    yaxis:{title:'Colour Temperature (K)'},
+    yaxis2:{title:'Brightness (%)',overlaying:'y',side:'right',range:[0,100]}
+  },{responsive:true});
+}
+draw();
+</script>
+</body>
+</html>
