@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Adaptive Lighting Curve Explorer</title>
+<title>Adaptive Lighting – 24 h Curve Explorer</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
   body{font-family:sans-serif;margin:1.5rem;}
@@ -13,8 +13,8 @@
 </style>
 </head>
 <body>
-<h2>Adaptive Lighting Curve Explorer</h2>
-<p>Adjust the parameters; the colour-temperature (K) and brightness (%) curves update live.</p>
+<h2>Adaptive Lighting – 24 h Curve Explorer</h2>
+<p>Move the sliders; colour-temperature and brightness update live over a full 24-hour cycle.</p>
 
 <div id="controls"></div>
 <div id="plot"></div>
@@ -70,24 +70,19 @@ sliders.forEach(([key,min,val,max,step])=>{
 });
 
 // -------------------------------------------------------------------
-// Math helpers (JS ports of your Python)
+// Math helpers (JS ports of Python)
 // -------------------------------------------------------------------
-
-// Colour-temperature: already latest (cubic smooth-step with gamma)
 function colorTemp(pos,minC,maxC,gamma){
-  let t = (pos + 1) * 0.5;           // map −1 … 1 → 0 … 1
+  let t = (pos + 1) * 0.5;           // 0..1
   if (gamma !== 1) t = Math.pow(t, gamma);
   const s = t*t*(3 - 2*t);           // smooth-step
   return minC + s * (maxC - minC);
 }
-
-// NEW brightness curve – cubic smooth-step instead of hard 100 %/linear
 function brightness(pos,minB,maxB){
-  const t = (pos + 1) * 0.5;         // 0 at night, 1 at noon
-  const s = t*t*(3 - 2*t);           // smooth-step easing
+  const t = (pos + 1) * 0.5;
+  const s = t*t*(3 - 2*t);
   return minB + s * (maxB - minB);
 }
-
 function luxNorm(lux,minL,maxL,gamma=0.6){
   lux = Math.max(minL, Math.min(maxL, lux));
   const ln = (Math.log10(lux) - Math.log10(minL)) /
@@ -107,30 +102,33 @@ function applyLux(cct,bri,lux,p){
   return [newC,newB];
 }
 
+// Time → position: pos = –cos(2π t / 24)
+const timeToPos = h => -Math.cos((2*Math.PI*h)/24);
+
 // -------------------------------------------------------------------
 // Plot
 // -------------------------------------------------------------------
 function compute(){
-  const xs=[],cct=[],bri=[],cctAdj=[],briAdj=[];
-  for(let i=0;i<=200;i++){
-    const pos = i/100 - 1;           // −1 … +1
+  const h=[],cct=[],bri=[],cctAdj=[],briAdj=[];
+  for(let t=0; t<=24; t+=0.1){
+    const pos = timeToPos(t);
     const baseC = colorTemp(pos,params.min_color_temp,params.max_color_temp,params.gamma);
     const baseB = brightness(pos,params.min_brightness,params.max_brightness);
     const [adjC,adjB] = applyLux(baseC,baseB,params.lux,params);
-    xs.push(pos); cct.push(baseC); bri.push(baseB); cctAdj.push(adjC); briAdj.push(adjB);
+    h.push(t); cct.push(baseC); bri.push(baseB); cctAdj.push(adjC); briAdj.push(adjB);
   }
-  return {xs,cct,bri,cctAdj,briAdj};
+  return {h,cct,bri,cctAdj,briAdj};
 }
 function draw(){
-  const {xs,cct,bri,cctAdj,briAdj} = compute();
+  const {h,cct,bri,cctAdj,briAdj} = compute();
   Plotly.newPlot('plot',[
-    {x:xs,y:cct    ,name:'CCT base (K)',   yaxis:'y1',type:'scatter'},
-    {x:xs,y:cctAdj ,name:'CCT adjusted',   yaxis:'y1',type:'scatter'},
-    {x:xs,y:bri    ,name:'Brightness base (%)',   yaxis:'y2',type:'scatter'},
-    {x:xs,y:briAdj ,name:'Brightness adjusted (%)',yaxis:'y2',type:'scatter'}
+    {x:h,y:cct    ,name:'CCT base (K)',   yaxis:'y1',type:'scatter'},
+    {x:h,y:cctAdj ,name:'CCT adjusted',   yaxis:'y1',type:'scatter'},
+    {x:h,y:bri    ,name:'Brightness base (%)',   yaxis:'y2',type:'scatter'},
+    {x:h,y:briAdj ,name:'Brightness adjusted (%)',yaxis:'y2',type:'scatter'}
   ],{
-    title:'Adaptive-Lighting Curves',
-    xaxis:{title:'Sun Position (–1 night → +1 noon)'},
+    title:'Adaptive-Lighting Curves over 24 h',
+    xaxis:{title:'Time of Day (hours)',range:[0,24]},
     yaxis:{title:'Colour Temperature (K)'},
     yaxis2:{title:'Brightness (%)',overlaying:'y',side:'right',range:[0,100]}
   },{responsive:true});
