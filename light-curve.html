@@ -61,9 +61,9 @@ const baseSliders=[
   ['gamma_bri0',0.5,1.5,3,0.1]   // brightness γ slider
 ];
 const luxSliders=[
-  ['lux',0,1000,10000,50],
-  ['gamma_bri',0.5,1.4,3,0.1],
-  ['gamma_cct',0.3,1,2,0.05]
+  //['lux',0,1000,10000,50],
+  //['gamma_bri',0.5,1.4,3,0.1],
+  //['gamma_cct',0.3,1,2,0.05]
 ];
 
 // Build a slider panel ------------------------------------------------
@@ -166,7 +166,7 @@ function plot(divId,x,cct,bri,title){
 function draw(){
   const {h,c0,b0,c1,b1,c2,b2}=compute();
   plot('plot0',h,c0,b0,'Stage 0 – Base curve');
-  plot('plot1',h,c1,b1,'Stage 1 – After lux');
+  //plot('plot1',h,c1,b1,'Stage 1 – After lux');
   // Future stages can be plotted similarly using c2/b2 etc.
 }
 
