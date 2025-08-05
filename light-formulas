@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Adaptive Lighting – Formula Explorer</title>
+<script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+<style>
+  body{font-family:sans-serif;margin:1.5rem;background:#f5f5f5;}
+  .container{max-width:1200px;margin:0 auto;background:white;padding:2rem;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);}
+  h2{margin-top:0;color:#333;}
+  h3{margin-top:2rem;color:#555;}
+  .controls{display:grid;grid-template-columns:180px 1fr 60px;
+            gap:8px;align-items:center;margin-bottom:1rem;}
+  input[type=range]{width:100%;}
+  label{font-size:.85rem;font-weight:600;color:#666;}
+  .formula-section{margin:2rem 0;padding:1.5rem;background:#f9f9f9;border-radius:6px;}
+  .formula-input{width:100%;padding:0.5rem;font-family:monospace;font-size:14px;
+                 border:1px solid #ddd;border-radius:4px;margin:0.5rem 0;}
+  .params-info{background:#e8f4f8;padding:1rem;border-radius:4px;margin:1rem 0;
+               font-size:0.9rem;line-height:1.6;}
+  .params-info code{background:#d0e8f0;padding:2px 6px;border-radius:3px;
+                    font-family:monospace;font-size:0.85rem;}
+  .stage{margin:2rem 0;}
+  .error{color:#d00;font-size:0.85rem;margin-top:0.5rem;}
+  button{background:#007acc;color:white;border:none;padding:0.5rem 1.5rem;
+         border-radius:4px;cursor:pointer;font-size:14px;margin-top:0.5rem;}
+  button:hover{background:#005a99;}
+</style>
+</head>
+<body>
+<div class="container">
+<h2>Adaptive Lighting – Formula Explorer</h2>
+
+<!-- Plot -->
+<div id="plot" class="stage"></div>
+
+<!-- Parameters Controls -->
+<h3>Parameters</h3>
+<div id="ctrl-params" class="controls"></div>
+
+<!-- Formula Section -->
+<div class="formula-section">
+  <h3>Custom Formulas</h3>
+  
+  <div class="params-info">
+    <strong>Available variables in formulas:</strong><br>
+    <code>pos</code> - Position in cycle (-1 to 1, where -1=midnight, 0=noon, 1=midnight)<br>
+    <code>t</code> - Normalized time (0 to 1, where 0=midnight, 0.5=noon, 1=midnight)<br>
+    <code>hour</code> - Hour of day (0-24)<br>
+    <strong>Available parameters:</strong><br>
+    <code>min_color_temp</code>, <code>max_color_temp</code> - CCT range<br>
+    <code>min_brightness</code>, <code>max_brightness</code> - Brightness range<br>
+    <code>gamma</code> - CCT gamma curve<br>
+    <code>gamma_bri</code> - Brightness gamma curve<br>
+    <strong>Available functions:</strong><br>
+    <code>smoothstep(x)</code> - Smooth cubic interpolation (0→1)<br>
+    <code>Math.*</code> - All JavaScript Math functions
+  </div>
+  
+  <label for="cct-formula">CCT Formula (returns color temperature in Kelvin):</label>
+  <textarea id="cct-formula" class="formula-input" rows="3"></textarea>
+  <div id="cct-error" class="error"></div>
+  
+  <label for="bri-formula">Brightness Formula (returns brightness 0-100%):</label>
+  <textarea id="bri-formula" class="formula-input" rows="3"></textarea>
+  <div id="bri-error" class="error"></div>
+  
+  <button onclick="updateFormulas()">Update Formulas</button>
+</div>
+
+<script>
+// -------------------------------------------------------------------
+// Parameters and defaults
+// -------------------------------------------------------------------
+const params = {
+  min_color_temp: 2000,
+  max_color_temp: 6500,
+  min_brightness: 1,
+  max_brightness: 100,
+  gamma: 2,
+  gamma_bri: 1.5
+};
+
+// Default formulas
+const defaultCCTFormula = `// Gamma-corrected smooth transition
+let tGamma = Math.pow(t, gamma);
+let s = smoothstep(tGamma);
+return min_color_temp + s * (max_color_temp - min_color_temp);`;
+
+const defaultBriFormula = `// Gamma-corrected smooth transition
+let tGamma = Math.pow(t, gamma_bri);
+let s = smoothstep(tGamma);
+return min_brightness + s * (max_brightness - min_brightness);`;
+
+// Slider definitions [key, min, default, max, step, label]
+const sliders = [
+  ['min_color_temp', 1500, 2000, 3000, 50, 'Min CCT (K)'],
+  ['max_color_temp', 4000, 6500, 8000, 50, 'Max CCT (K)'],
+  ['min_brightness', 0, 1, 50, 1, 'Min Brightness (%)'],
+  ['max_brightness', 50, 100, 100, 1, 'Max Brightness (%)'],
+  ['gamma', 0.2, 2, 5, 0.1, 'CCT Gamma'],
+  ['gamma_bri', 0.2, 1.5, 5, 0.1, 'Brightness Gamma']
+];
+
+// Current formula functions
+let cctFunction = null;
+let briFunction = null;
+
+// Helper functions available in formulas
+function smoothstep(x) {
+  x = Math.max(0, Math.min(1, x));
+  return x * x * (3 - 2 * x);
+}
+
+// Build slider panel
+function makePanel() {
+  const panel = document.getElementById('ctrl-params');
+  sliders.forEach(([key, min, val, max, step, label]) => {
+    const lab = document.createElement('label');
+    lab.textContent = label;
+    
+    const rng = document.createElement('input');
+    rng.type = 'range';
+    rng.min = min;
+    rng.max = max;
+    rng.step = step;
+    rng.value = val;
+    
+    const out = document.createElement('span');
+    out.textContent = val;
+    
+    rng.oninput = e => {
+      params[key] = parseFloat(e.target.value);
+      out.textContent = e.target.value;
+      draw();
+    };
+    
+    panel.append(lab, rng, out);
+    params[key] = val;
+  });
+}
+
+// Compile formula strings into functions
+function compileFormula(formulaStr, errorElementId) {
+  const errorEl = document.getElementById(errorElementId);
+  errorEl.textContent = '';
+  
+  try {
+    // Create function with all parameters and variables in scope
+    const func = new Function(
+      'pos', 't', 'hour',
+      'min_color_temp', 'max_color_temp',
+      'min_brightness', 'max_brightness',
+      'gamma', 'gamma_bri',
+      'smoothstep', 'Math',
+      formulaStr
+    );
+    return func;
+  } catch (e) {
+    errorEl.textContent = 'Error: ' + e.message;
+    return null;
+  }
+}
+
+// Update formulas from text areas
+function updateFormulas() {
+  const cctFormula = document.getElementById('cct-formula').value;
+  const briFormula = document.getElementById('bri-formula').value;
+  
+  const newCCT = compileFormula(cctFormula, 'cct-error');
+  const newBri = compileFormula(briFormula, 'bri-error');
+  
+  if (newCCT) cctFunction = newCCT;
+  if (newBri) briFunction = newBri;
+  
+  draw();
+}
+
+// Convert hour to position
+const timeToPos = h => -Math.cos((2 * Math.PI * h) / 24);
+
+// Compute data for plotting
+function compute() {
+  const hours = [], ccts = [], bris = [];
+  
+  for (let hour = 0; hour <= 24; hour += 0.1) {
+    const pos = timeToPos(hour);
+    const t = (pos + 1) * 0.5;  // Normalize to 0-1
+    
+    try {
+      const cct = cctFunction(
+        pos, t, hour,
+        params.min_color_temp, params.max_color_temp,
+        params.min_brightness, params.max_brightness,
+        params.gamma, params.gamma_bri,
+        smoothstep, Math
+      );
+      
+      const bri = briFunction(
+        pos, t, hour,
+        params.min_color_temp, params.max_color_temp,
+        params.min_brightness, params.max_brightness,
+        params.gamma, params.gamma_bri,
+        smoothstep, Math
+      );
+      
+      hours.push(hour);
+      ccts.push(Math.round(cct));
+      bris.push(Math.round(bri));
+    } catch (e) {
+      console.error('Formula evaluation error:', e);
+    }
+  }
+  
+  return { hours, ccts, bris };
+}
+
+// Plot the data
+function plot(x, cct, bri) {
+  Plotly.newPlot('plot', [
+    {
+      x: x,
+      y: cct,
+      name: 'CCT (K)',
+      yaxis: 'y1',
+      line: { shape: 'spline', width: 3, color: '#ff7f0e' }
+    },
+    {
+      x: x,
+      y: bri,
+      name: 'Brightness (%)',
+      yaxis: 'y2',
+      line: { shape: 'spline', width: 3, color: '#2ca02c' }
+    }
+  ], {
+    title: 'Adaptive Lighting Curve',
+    xaxis: {
+      title: 'Time of Day (hours)',
+      range: [0, 24],
+      dtick: 3
+    },
+    yaxis: {
+      title: 'Color Temperature (K)',
+      range: [params.min_color_temp - 200, params.max_color_temp + 200],
+      autorange: false,
+      titlefont: { color: '#ff7f0e' },
+      tickfont: { color: '#ff7f0e' }
+    },
+    yaxis2: {
+      title: 'Brightness (%)',
+      overlaying: 'y',
+      side: 'right',
+      range: [0, 105],
+      autorange: false,
+      titlefont: { color: '#2ca02c' },
+      tickfont: { color: '#2ca02c' }
+    },
+    showlegend: true,
+    legend: { x: 0.02, y: 0.98 },
+    margin: { t: 50 }
+  }, {
+    responsive: true
+  });
+}
+
+// Draw function
+function draw() {
+  if (!cctFunction || !briFunction) return;
+  const { hours, ccts, bris } = compute();
+  plot(hours, ccts, bris);
+}
+
+// Initialize
+makePanel();
+document.getElementById('cct-formula').value = defaultCCTFormula;
+document.getElementById('bri-formula').value = defaultBriFormula;
+updateFormulas();
+</script>
+</div>
+</body>
+</html>
