@@ -1,175 +1,184 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Adaptive Lighting – Pipeline Explorer (fixed-scale + brightness γ)</title>
+<meta charset="UTF-8" />
+<title>Adaptive Lighting – Formula Explorer</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
-  body{font-family:sans-serif;margin:1.5rem;}
-  h2{margin-top:0}
-  .controls{display:grid;grid-template-columns:220px 1fr 45px;
-            gap:6px;align-items:center;margin-bottom:1rem}
+  body{font-family:sans-serif;margin:1.5rem;background:#f5f5f5;}
+  .container{max-width:1200px;margin:0 auto;background:#fff;padding:2rem;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);}  
+  h2{margin-top:0;color:#333;}
+  h3{margin-top:2rem;color:#555;}
+  .controls{display:grid;grid-template-columns:180px 1fr 60px;gap:8px;align-items:center;margin-bottom:1rem}
   input[type=range]{width:100%}
-  label{font-size:.85rem}
-  .stage{margin:1.75rem 0}
-  .divider{font-size:2rem;text-align:center;margin:0.5rem 0}
+  label{font-size:.85rem;font-weight:600;color:#666}
+  .stage{margin:2rem 0}
+  .note{font-size:.9rem;color:#666;margin-bottom:1rem}
+  .warn{color:#a33;font-size:.85rem}
+  button{background:#007acc;color:#fff;border:none;padding:.5rem 1.25rem;border-radius:4px;cursor:pointer;font-size:14px}
+  button:hover{background:#005a99}
 </style>
 </head>
 <body>
-<h2>Adaptive Lighting – Pipeline Explorer</h2>
+<div class="container">
+  <h2>Adaptive Lighting – Formula Explorer</h2>
+  <div class="note">CCT and Brightness curves use built‑in gamma + smoothstep (no custom formulas). CCT line is colorized by its Kelvin.</div>
 
-<!-- STAGE 0 CONTROLS -------------------------------------------------->
-<h3>Stage 0 • Base curve</h3>
-<div id="ctrl-base" class="controls"></div>
+  <!-- Plot -->
+  <div id="plot" class="stage"></div>
 
-<div id="plot0" class="stage"></div>
-
-<div class="divider">↓</div>
-
-<!-- STAGE 1 CONTROLS -------------------------------------------------->
-<h3>Stage 1 • Lux filter (new γ curves)</h3>
-<div id="ctrl-lux" class="controls"></div>
-
-<div id="plot1" class="stage"></div>
-
-<div class="divider">↓</div>
-
-<!-- STAGE 2 (no controls) ------------------------------------------->
-<h3>Stage 2 • Final (future filters)</h3>
-<div id="plot2" class="stage"></div>
+  <!-- Parameters Controls -->
+  <h3>Parameters</h3>
+  <div id="ctrl-params" class="controls"></div>
+  <div id="range-warn" class="warn"></div>
+</div>
 
 <script>
-// -------------------------------------------------------------------
-// Parameters (defaults)
-// -------------------------------------------------------------------
-const params={
-  /* base-curve */
-  min_color_temp:2000,max_color_temp:6500,
-  min_brightness:1,max_brightness:100,
-  gamma:2,                 // CCT gamma
-  gamma_bri0:1.5,            // **NEW** brightness gamma for Stage 0
-
-  /* lux */
-  lux:1000,min_lux:10,max_lux:6000,
-  gamma_bri:1.4,           // inverse-gamma for lux brightness dimming
-  gamma_cct:1.0            // gamma for CCT smooth-step under lux
+// --------------------------- Params ---------------------------------
+const params = {
+  min_color_temp: 500,
+  max_color_temp: 6500,
+  min_brightness: 1,
+  max_brightness: 100,
+  gamma: 2,
+  gamma_bri: 1.5
 };
 
-// Slider definitions per panel  [key, min, val, max, step]
-const baseSliders=[
-  ['gamma',0.2,2,3,0.1],
-  ['gamma_bri0',0.5,1.5,3,0.1]   // brightness γ slider
+// Slider specs: [key, min, default, max, step, label]
+const sliders = [
+  ['min_color_temp', 500, 500, 6500, 50, 'Min CCT (K)'],
+  ['max_color_temp', 500, 6500, 6500, 50, 'Max CCT (K)'],
+  ['min_brightness', 0, 1, 50, 1, 'Min Brightness (%)'],
+  ['max_brightness', 50, 100, 100, 1, 'Max Brightness (%)'],
+  ['gamma', 0.2, 2, 5, 0.1, 'CCT Gamma'],
+  ['gamma_bri', 0.2, 1.5, 5, 0.1, 'Brightness Gamma']
 ];
-const luxSliders=[
-  //['lux',0,1000,10000,50],
-  //['gamma_bri',0.5,1.4,3,0.1],
-  //['gamma_cct',0.3,1,2,0.05]
-];
 
-// Build a slider panel ------------------------------------------------
-function makePanel(containerId,sliderDefs){
-  const wrap=t=>document.createElement(t);
-  const panel=document.getElementById(containerId);
-  sliderDefs.forEach(([key,min,val,max,step])=>{
-    const lab=wrap('label'); lab.textContent=key;
-    const rng=wrap('input');
-    rng.type='range'; rng.min=min; rng.max=max; rng.step=step; rng.value=val;
-    const out=wrap('span'); out.textContent=val;
-    rng.oninput=e=>{params[key]=parseFloat(e.target.value);
-                    out.textContent=e.target.value; draw();};
-    panel.append(lab,rng,out);
-    params[key]=val;
-  });
-}
-makePanel('ctrl-base',baseSliders);
-makePanel('ctrl-lux',luxSliders);
+// ------------------------- Helpers ----------------------------------
+function smoothstep(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3-2*x); }
+const timeToPos = h => -Math.cos((2*Math.PI*h)/24);
 
-// -------------------------------------------------------------------
-// Math helpers (same as prod, with **brightness γ** added)
-// -------------------------------------------------------------------
-function smoothstep(x){return x*x*(3-2*x);}  // cubic 0→1
+// Approximate black-body CCT (K) to RGB (0-255) – classic algorithm
+function cctToRGB(k){
+  // Clamp to sensible range
+  k = Math.max(500, Math.min(6500, k));
+  let t = k/100; // use 100s
+  let r, g, b;
 
-function colorTemp(pos,min,max,g){
-  let t=(pos+1)*0.5; if(g!==1) t=t**g;
-  const s=smoothstep(t);
-  return min+s*(max-min);
+  // Red
+  if (t <= 66) r = 255; else r = 329.698727446 * Math.pow(t - 60, -0.1332047592);
+  // Green
+  if (t <= 66) g = 99.4708025861 * Math.log(t) - 161.1195681661; 
+  else g = 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+  // Blue
+  if (t >= 66) b = 255; 
+  else if (t <= 19) b = 0; 
+  else b = 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+
+  const clamp = v => Math.max(0, Math.min(255, Math.round(v)));
+  return `rgb(${clamp(r)},${clamp(g)},${clamp(b)})`;
 }
 
-// Stage 0 brightness with gamma
-function brightnessBase(pos,min,max,gamma){
-  let t=(pos+1)*0.5; if(gamma!==1) t=t**gamma;
-  const s=smoothstep(t);
-  return min+s*(max-min);
-}
-
-// Linear normalisation of lux (0→1, clamped)
-function luxNorm(lux,min,max){
-  return Math.max(0, Math.min(1, (lux-min)/(max-min)));
-}
-
-// Apply new lux formula: inverse-gamma brightness + smooth-step CCT
-function applyLux(cct,bri,lux,p){
-  if(isNaN(lux)) return [cct,bri];
-  const ln=luxNorm(lux,p.min_lux,p.max_lux);
-
-  // Brightness factor (1→0 as lux rises)
-  const briFactor=1-Math.pow(ln,p.gamma_bri);
-  const bri2=Math.round(p.min_brightness + briFactor*(bri - p.min_brightness));
-
-  // CCT mapping
-  const t=smoothstep(ln);
-  const cct2=Math.round(p.min_color_temp + Math.pow(t,p.gamma_cct)*(p.max_color_temp - p.min_color_temp));
-
-  return [cct2,bri2];
-}
-
-const timeToPos=h=>-Math.cos((2*Math.PI*h)/24);
-
-// -------------------------------------------------------------------
-// Pipeline computation + plotting
-// -------------------------------------------------------------------
+// Compute using built-in gamma+smoothstep curves
 function compute(){
-  const h=[],c0=[],b0=[],c1=[],b1=[],c2=[],b2=[];
-  for(let t=0;t<=24;t+=0.1){
-    const pos=timeToPos(t);
+  const hours=[], ccts=[], bris=[];
+  for (let hour=0; hour<=24; hour+=0.1){
+    const pos = timeToPos(hour);
+    const t = (pos+1)*0.5; // 0..1
 
-    // Stage 0
-    const baseC=colorTemp(pos,params.min_color_temp,params.max_color_temp,params.gamma);
-    const baseB=brightnessBase(pos,params.min_brightness,params.max_brightness,params.gamma_bri0);
+    const tGammaCCT = Math.pow(t, params.gamma);
+    const sCCT = smoothstep(tGammaCCT);
+    const cct = params.min_color_temp + sCCT*(params.max_color_temp - params.min_color_temp);
 
-    // Stage 1 (lux filter)
-    const [luxC,luxB]=applyLux(baseC,baseB,params.lux,params);
+    const tGammaB = Math.pow(t, params.gamma_bri);
+    const sB = smoothstep(tGammaB);
+    const bri = params.min_brightness + sB*(params.max_brightness - params.min_brightness);
 
-    // Stage 2 (placeholder)
-    const finC=luxC, finB=luxB;
-
-    h.push(t); c0.push(baseC); b0.push(baseB);
-    c1.push(luxC); b1.push(luxB);
-    c2.push(finC); b2.push(finB);
+    hours.push(hour);
+    ccts.push(cct);
+    bris.push(bri);
   }
-  return{h,c0,b0,c1,b1,c2,b2};
+  return {hours, ccts, bris};
 }
 
-function plot(divId,x,cct,bri,title){
-  Plotly.newPlot(divId,[
-    {x,y:cct,name:'CCT (K)',yaxis:'y1',line:{shape:'spline'}},
-    {x,y:bri,name:'Brightness (%)',yaxis:'y2',line:{shape:'spline'}}
-  ],{
-    title,
-    xaxis:{title:'Time of Day (h)',range:[0,24]},
-    // **FIXED SCALE** for CCT so the axis no longer rescales on slider moves
-    yaxis:{title:'Colour Temp (K)',range:[params.min_color_temp, params.max_color_temp],autorange:false},
-    yaxis2:{title:'Brightness (%)',overlaying:'y',side:'right',range:[0,100],autorange:false}
-  },{responsive:true});
+// Build many tiny line segments so each can be colorized by its CCT
+function buildCCTColoredSegments(x, y){
+  const segs = [];
+  for (let i=1; i<x.length; i++){
+    const c = cctToRGB((y[i-1]+y[i])/2);
+    segs.push({
+      type: 'scatter', mode: 'lines', x: [x[i-1], x[i]], y: [y[i-1], y[i]],
+      line: {width: 4, color: c}, hoverinfo: 'skip', showlegend: false, yaxis: 'y1', name: 'CCT (K)'
+    });
+  }
+  return segs;
+}
+
+// Ensure valid ranges and give user feedback
+function enforceRanges(){
+  const warn = document.getElementById('range-warn');
+  warn.textContent = '';
+  if (params.min_color_temp > params.max_color_temp){
+    // Swap to keep sane
+    const tmp = params.min_color_temp;
+    params.min_color_temp = params.max_color_temp;
+    params.max_color_temp = tmp;
+    warn.textContent = 'Note: Min CCT exceeded Max; values swapped.';
+  }
+}
+
+// Plot
+function plot(x, cct, bri){
+  const cctSegs = buildCCTColoredSegments(x, cct);
+
+  // Legend proxies
+  const cctLegend = {
+    type:'scatter', mode:'lines', x:[null], y:[null], name:'CCT (K)',
+    line:{width:4, color: cctToRGB((params.min_color_temp+params.max_color_temp)/2)},
+    hoverinfo:'skip', yaxis:'y1', showlegend:true
+  };
+  const briTrace = {
+    type:'scatter', mode:'lines', x:x, y:bri.map(v=>Math.round(v)), name:'Brightness (%)',
+    yaxis:'y2', line:{width:3}, hovertemplate:'%{y:.0f}% at %{x:.1f}h<extra></extra>'
+  };
+
+  const data = [...cctSegs, cctLegend, briTrace];
+
+  const yMin = Math.max(0, Math.min(params.min_color_temp, params.max_color_temp) - 200);
+  const yMax = Math.max(params.min_color_temp, params.max_color_temp) + 200;
+
+  Plotly.newPlot('plot', data, {
+    title: 'Adaptive Lighting Curve',
+    xaxis: {title:'Time of Day (hours)', range:[0,24], dtick:3},
+    yaxis: {title:'Color Temperature (K)', range:[yMin, yMax], autorange:false, titlefont:{color:'#333'}, tickfont:{color:'#333'}},
+    yaxis2: {title:'Brightness (%)', overlaying:'y', side:'right', range:[0,105], autorange:false},
+    showlegend:true, legend:{x:0.02,y:0.98}, margin:{t:50}
+  }, {responsive:true});
 }
 
 function draw(){
-  const {h,c0,b0,c1,b1,c2,b2}=compute();
-  plot('plot0',h,c0,b0,'Stage 0 – Base curve');
-  //plot('plot1',h,c1,b1,'Stage 1 – After lux');
-  // Future stages can be plotted similarly using c2/b2 etc.
+  enforceRanges();
+  const {hours, ccts, bris} = compute();
+  plot(hours, ccts, bris);
 }
 
+// Build slider UI
+function makePanel(){
+  const panel = document.getElementById('ctrl-params');
+  sliders.forEach(([key, min, val, max, step, label]) => {
+    const lab = document.createElement('label'); lab.textContent = label;
+    const rng = document.createElement('input');
+    rng.type='range'; rng.min=min; rng.max=max; rng.step=step; rng.value=val;
+    const out = document.createElement('span'); out.textContent = val;
+    rng.oninput = e => { params[key] = parseFloat(e.target.value); out.textContent = e.target.value; draw(); };
+    panel.append(lab, rng, out);
+    params[key] = val;
+  });
+}
+
+// Init
+makePanel();
+// First draw
 draw();
 </script>
 </body>
