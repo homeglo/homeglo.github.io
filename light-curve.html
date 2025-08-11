@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Adaptive Lighting – Formula Explorer</title>
+<title>Adaptive Lighting – Brightness Colored by CCT</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
   body{font-family:sans-serif;margin:1.5rem;background:#f5f5f5;}
@@ -15,19 +15,15 @@
   .stage{margin:2rem 0}
   .note{font-size:.9rem;color:#666;margin-bottom:1rem}
   .warn{color:#a33;font-size:.85rem}
-  button{background:#007acc;color:#fff;border:none;padding:.5rem 1.25rem;border-radius:4px;cursor:pointer;font-size:14px}
-  button:hover{background:#005a99}
 </style>
 </head>
 <body>
 <div class="container">
-  <h2>Adaptive Lighting – Formula Explorer</h2>
-  <div class="note">CCT and Brightness curves use built‑in gamma + smoothstep (no custom formulas). CCT line is colorized by its Kelvin.</div>
+  <h2>Adaptive Lighting – Brightness Curve (Colorized by CCT)</h2>
+  <div class="note">Single brightness curve on the Y-axis. Segment color = CCT at that time.</div>
 
-  <!-- Plot -->
   <div id="plot" class="stage"></div>
 
-  <!-- Parameters Controls -->
   <h3>Parameters</h3>
   <div id="ctrl-params" class="controls"></div>
   <div id="range-warn" class="warn"></div>
@@ -58,28 +54,22 @@ const sliders = [
 function smoothstep(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3-2*x); }
 const timeToPos = h => -Math.cos((2*Math.PI*h)/24);
 
-// Approximate black-body CCT (K) to RGB (0-255) – classic algorithm
+// Approximate black-body CCT (K) to RGB (0-255)
 function cctToRGB(k){
-  // Clamp to sensible range
   k = Math.max(500, Math.min(6500, k));
-  let t = k/100; // use 100s
-  let r, g, b;
-
-  // Red
+  let t = k/100;
+  let r,g,b;
   if (t <= 66) r = 255; else r = 329.698727446 * Math.pow(t - 60, -0.1332047592);
-  // Green
-  if (t <= 66) g = 99.4708025861 * Math.log(t) - 161.1195681661; 
+  if (t <= 66) g = 99.4708025861 * Math.log(t) - 161.1195681661;
   else g = 288.1221695283 * Math.pow(t - 60, -0.0755148492);
-  // Blue
-  if (t >= 66) b = 255; 
-  else if (t <= 19) b = 0; 
+  if (t >= 66) b = 255;
+  else if (t <= 19) b = 0;
   else b = 138.5177312231 * Math.log(t - 10) - 305.0447927307;
-
   const clamp = v => Math.max(0, Math.min(255, Math.round(v)));
   return `rgb(${clamp(r)},${clamp(g)},${clamp(b)})`;
 }
 
-// Compute using built-in gamma+smoothstep curves
+// Compute curves
 function compute(){
   const hours=[], ccts=[], bris=[];
   for (let hour=0; hour<=24; hour+=0.1){
@@ -101,25 +91,29 @@ function compute(){
   return {hours, ccts, bris};
 }
 
-// Build many tiny line segments so each can be colorized by its CCT
-function buildCCTColoredSegments(x, y){
+// Build many tiny line segments so each can be colorized by CCT
+function buildBrightnessColoredByCCT(x, bri, cct){
   const segs = [];
   for (let i=1; i<x.length; i++){
-    const c = cctToRGB((y[i-1]+y[i])/2);
+    const midCCT = (cct[i-1]+cct[i])/2;
     segs.push({
-      type: 'scatter', mode: 'lines', x: [x[i-1], x[i]], y: [y[i-1], y[i]],
-      line: {width: 4, color: c}, hoverinfo: 'skip', showlegend: false, yaxis: 'y1', name: 'CCT (K)'
+      type: 'scatter',
+      mode: 'lines',
+      x: [x[i-1], x[i]],
+      y: [bri[i-1], bri[i]],
+      line: {width: 4, color: cctToRGB(midCCT)},
+      hoverinfo: 'skip',
+      showlegend: false,
+      name: 'Brightness (%)'
     });
   }
   return segs;
 }
 
-// Ensure valid ranges and give user feedback
 function enforceRanges(){
   const warn = document.getElementById('range-warn');
   warn.textContent = '';
   if (params.min_color_temp > params.max_color_temp){
-    // Swap to keep sane
     const tmp = params.min_color_temp;
     params.min_color_temp = params.max_color_temp;
     params.max_color_temp = tmp;
@@ -127,31 +121,26 @@ function enforceRanges(){
   }
 }
 
-// Plot
-function plot(x, cct, bri){
-  const cctSegs = buildCCTColoredSegments(x, cct);
+// Use a different function name than "plot" to avoid collisions with the #plot div id.
+function renderPlot(x, cct, bri){
+  const segs = buildBrightnessColoredByCCT(x, bri.map(v=>Math.round(v)), cct);
 
-  // Legend proxies
-  const cctLegend = {
-    type:'scatter', mode:'lines', x:[null], y:[null], name:'CCT (K)',
+  // Legend proxy so something shows up in legend
+  const legendProxy = {
+    type:'scatter',
+    mode:'lines',
+    x:[null],
+    y:[null],
+    name:'Brightness (%)',
     line:{width:4, color: cctToRGB((params.min_color_temp+params.max_color_temp)/2)},
-    hoverinfo:'skip', yaxis:'y1', showlegend:true
-  };
-  const briTrace = {
-    type:'scatter', mode:'lines', x:x, y:bri.map(v=>Math.round(v)), name:'Brightness (%)',
-    yaxis:'y2', line:{width:3}, hovertemplate:'%{y:.0f}% at %{x:.1f}h<extra></extra>'
+    hoverinfo:'skip',
+    showlegend:true
   };
 
-  const data = [...cctSegs, cctLegend, briTrace];
-
-  const yMin = Math.max(0, Math.min(params.min_color_temp, params.max_color_temp) - 200);
-  const yMax = Math.max(params.min_color_temp, params.max_color_temp) + 200;
-
-  Plotly.newPlot('plot', data, {
-    title: 'Adaptive Lighting Curve',
+  Plotly.newPlot('plot', [...segs, legendProxy], {
+    title: 'Brightness over Time (colored by CCT)',
     xaxis: {title:'Time of Day (hours)', range:[0,24], dtick:3},
-    yaxis: {title:'Color Temperature (K)', range:[yMin, yMax], autorange:false, titlefont:{color:'#333'}, tickfont:{color:'#333'}},
-    yaxis2: {title:'Brightness (%)', overlaying:'y', side:'right', range:[0,105], autorange:false},
+    yaxis: {title:'Brightness (%)', range:[0,105], autorange:false},
     showlegend:true, legend:{x:0.02,y:0.98}, margin:{t:50}
   }, {responsive:true});
 }
@@ -159,7 +148,7 @@ function plot(x, cct, bri){
 function draw(){
   enforceRanges();
   const {hours, ccts, bris} = compute();
-  plot(hours, ccts, bris);
+  renderPlot(hours, ccts, bris);
 }
 
 // Build slider UI
@@ -178,7 +167,6 @@ function makePanel(){
 
 // Init
 makePanel();
-// First draw
 draw();
 </script>
 </body>
