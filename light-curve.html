@@ -12,8 +12,10 @@
   .controls{display:grid;grid-template-columns:220px 1fr 120px;gap:8px;align-items:center;margin-bottom:1rem}
   input[type=range]{width:100%}
   input[type=text]{width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:6px}
+  input[type=checkbox]{margin:0}
   select{width:100%;padding:6px 8px;border:1px solid #ddd;border-radius:6px;background:#fff}
   label{font-size:.85rem;font-weight:600;color:#666}
+  .checkbox-label{display:flex;align-items:center;gap:8px}
   .stage{margin:2rem 0}
   .note{font-size:.9rem;color:#666;margin-bottom:1rem}
   .warn{color:#a33;font-size:.85rem}
@@ -42,10 +44,11 @@ const params = {
   max_brightness: 100,
   gamma: 2,
   gamma_bri: 1.5,
-  month: 7,            // 1..12 (default July)
+  month: new Date().getMonth() + 1,  // 1..12 (current month)
   latitude: 35.0,      // degrees (N + / S -)
   longitude: -78.6,    // degrees (E + / W -)
-  timezone: 'US/Eastern'
+  timezone: 'US/Eastern',
+  use12Hour: false     // Toggle for 12-hour (AM/PM) vs 24-hour format
 };
 
 // Range sliders: [key, min, default, max, step, label]
@@ -56,7 +59,7 @@ const sliders = [
   ['max_brightness', 50, 100, 100, 1, 'Max Brightness (%)'],
   ['gamma', 0.2, 2, 5, 0.1, 'CCT Gamma'],
   ['gamma_bri', 0.2, 1.5, 5, 0.1, 'Brightness Gamma'],
-  ['month', 1, 7, 12, 1, 'Month (1–12)']
+  ['month', 1, new Date().getMonth() + 1, 12, 1, 'Month (1–12)']
 ];
 
 // Text inputs (no sliders)
@@ -95,6 +98,25 @@ function utcOffsetFor(zone, month){
 // ------------------------- Helpers ----------------------------------
 function smoothstep(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3-2*x); }
 const timeToPos = h => -Math.cos((2*Math.PI*h)/24);
+
+// Format time for display (24-hour HH:MM or 12-hour with AM/PM)
+function formatTime(hour, use12Hour) {
+  const h = Math.floor(hour);
+  const m = Math.round((hour - h) * 60);
+  
+  if (!use12Hour) {
+    // 24-hour format: HH:MM
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+  }
+  
+  // 12-hour format with AM/PM
+  let displayHour = h % 12;
+  if (displayHour === 0) displayHour = 12;
+  const ampm = h < 12 ? 'AM' : 'PM';
+  
+  if (m === 0) return `${displayHour}${ampm}`;
+  return `${displayHour}:${m.toString().padStart(2, '0')}${ampm}`;
+}
 
 // Approximate black-body CCT (K) to RGB (0-255)
 function cctToRGB(k){
@@ -152,6 +174,39 @@ function sunElevationDeg(clockHour, month, latDeg, lonDeg, tzName){
   const H = hourAngleRad(clockHour, utcOffset, lonDeg, doy);
   const sinAlt = Math.sin(phi)*Math.sin(delta) + Math.cos(phi)*Math.cos(delta)*Math.cos(H);
   return rad2deg(Math.asin(sinAlt));
+}
+
+// Calculate sunrise, sunset, and solar noon times (returns clock hours)
+function calculateSunTimes(month, latDeg, lonDeg, tzName){
+  const doy = doyForMonthMid(month);
+  const phi = deg2rad(latDeg);
+  const delta = solarDeclinationRad(doy);
+  
+  // Hour angle at sunrise/sunset (when sun elevation = 0)
+  const cosH = -Math.tan(phi) * Math.tan(delta);
+  
+  // Solar noon is always at 12:00 local solar time
+  const solarNoonLocalSolar = 12; // hours
+  
+  // Convert from local solar time to clock time
+  const utcOffset = utcOffsetFor(tzName, month);
+  const LSTM = 15 * utcOffset;
+  const TC_min = equationOfTimeMinutes(doy) + 4*(lonDeg - LSTM);
+  
+  const solarNoon = solarNoonLocalSolar - TC_min/60;
+  
+  // Check for polar day/night
+  if (cosH > 1) return {sunrise: null, sunset: null, solarNoon}; // polar night
+  if (cosH < -1) return {sunrise: 0, sunset: 24, solarNoon}; // polar day
+  
+  const H = rad2deg(Math.acos(cosH)); // degrees
+  const sunriseLocalSolar = 12 - H/15; // hours
+  const sunsetLocalSolar = 12 + H/15; // hours
+  
+  const sunrise = sunriseLocalSolar - TC_min/60;
+  const sunset = sunsetLocalSolar - TC_min/60;
+  
+  return {sunrise, sunset, solarNoon};
 }
 
 // --- New helper for clear-sky power (W/m²) ---
@@ -236,13 +291,16 @@ function renderPlot(x, cct, bri, sunPower){
     hoverinfo:'skip', showlegend:true, yaxis:'y'
   };
 
-  // Transparent hover proxy
+  // Transparent hover proxy with formatted time
   const hoverProxy = {
     type:'scatter', mode:'lines',
     x: x, y: bri,
     name: 'Brightness (hover)',
     line: {width: 10, color: 'rgba(0,0,0,0)'},
-    hovertemplate: 'Hour %{x:.1f}<br>Brightness %{y:.0f}%<br>CCT %{customdata:.0f} K<extra></extra>',
+    hovertemplate: params.use12Hour 
+      ? '%{text}<br>Brightness %{y:.0f}%<br>CCT %{customdata:.0f} K<extra></extra>'
+      : 'Time %{text}<br>Brightness %{y:.0f}%<br>CCT %{customdata:.0f} K<extra></extra>',
+    text: x.map(h => formatTime(h, params.use12Hour)),
     customdata: cct,
     yaxis: 'y',
     showlegend: false
@@ -255,15 +313,134 @@ function renderPlot(x, cct, bri, sunPower){
     name: 'Sun Power (W/m²)',
     line: {width: 2, color: 'orange'},
     yaxis: 'y2',
-    hovertemplate: 'Hour %{x:.1f}<br>Sun Power %{y:.0f} W/m²<extra></extra>'
+    hovertemplate: params.use12Hour
+      ? '%{text}<br>Sun Power %{y:.0f} W/m²<extra></extra>'
+      : 'Time %{text}<br>Sun Power %{y:.0f} W/m²<extra></extra>',
+    text: x.map(h => formatTime(h, params.use12Hour))
   };
 
-  Plotly.newPlot('plot', [...segs, legendProxy, hoverProxy, powerTrace], {
+  // Get current time
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes()/60;
+  
+  // Find brightness and CCT at current time
+  let currentBri = 0, currentCCT = params.min_color_temp;
+  for (let i = 1; i < x.length; i++) {
+    if (x[i] >= currentHour) {
+      const t = (currentHour - x[i-1]) / (x[i] - x[i-1]);
+      currentBri = bri[i-1] + t * (bri[i] - bri[i-1]);
+      currentCCT = cct[i-1] + t * (cct[i] - cct[i-1]);
+      break;
+    }
+  }
+  
+  // Current time marker
+  const currentTimeMarker = {
+    type: 'scatter',
+    mode: 'markers',
+    x: [currentHour],
+    y: [currentBri],
+    name: 'Current Time',
+    marker: {
+      size: 12,
+      color: cctToRGB(currentCCT),
+      line: {width: 2, color: 'black'}
+    },
+    hovertemplate: 'Current Time: ' + formatTime(currentHour, params.use12Hour) + '<br>Brightness: %{y:.0f}%<br>CCT: ' + Math.round(currentCCT) + ' K<extra></extra>',
+    yaxis: 'y',
+    showlegend: true
+  };
+
+  // Calculate sunrise, sunset, and solar noon
+  const {sunrise, sunset, solarNoon} = calculateSunTimes(params.month, params.latitude, params.longitude, params.timezone);
+  
+  // Shapes for sunrise/sunset/solar noon vertical lines
+  const shapes = [];
+  const annotations = [];
+  
+  if (sunrise !== null && sunrise >= 0 && sunrise <= 24) {
+    shapes.push({
+      type: 'line',
+      x0: sunrise, x1: sunrise,
+      y0: 0, y1: 1,
+      yref: 'paper',
+      line: {color: 'gold', width: 2, dash: 'dash'}
+    });
+    annotations.push({
+      x: sunrise,
+      y: 1.02,
+      yref: 'paper',
+      text: 'Sunrise',
+      showarrow: false,
+      font: {size: 10, color: 'goldenrod'},
+      xanchor: 'center'
+    });
+  }
+  
+  if (sunset !== null && sunset >= 0 && sunset <= 24) {
+    shapes.push({
+      type: 'line',
+      x0: sunset, x1: sunset,
+      y0: 0, y1: 1,
+      yref: 'paper',
+      line: {color: 'darkorange', width: 2, dash: 'dash'}
+    });
+    annotations.push({
+      x: sunset,
+      y: 1.02,
+      yref: 'paper',
+      text: 'Sunset',
+      showarrow: false,
+      font: {size: 10, color: 'darkorange'},
+      xanchor: 'center'
+    });
+  }
+  
+  // Solar noon marker
+  if (solarNoon >= 0 && solarNoon <= 24) {
+    shapes.push({
+      type: 'line',
+      x0: solarNoon, x1: solarNoon,
+      y0: 0, y1: 1,
+      yref: 'paper',
+      line: {color: 'red', width: 2, dash: 'dot'}
+    });
+    annotations.push({
+      x: solarNoon,
+      y: 1.02,
+      yref: 'paper',
+      text: 'Solar Noon',
+      showarrow: false,
+      font: {size: 10, color: 'red'},
+      xanchor: 'center'
+    });
+  }
+
+  // X-axis configuration based on time format
+  const xaxisConfig = params.use12Hour 
+    ? {
+        title: 'Time',
+        range: [0, 24],
+        tickmode: 'array',
+        tickvals: [0, 3, 6, 9, 12, 15, 18, 21, 24],
+        ticktext: ['12AM', '3AM', '6AM', '9AM', '12PM', '3PM', '6PM', '9PM', '12AM']
+      }
+    : {
+        title: 'Time (24-hour)',
+        range: [0, 24],
+        tickmode: 'array',
+        tickvals: [0, 3, 6, 9, 12, 15, 18, 21, 24],
+        ticktext: ['00:00', '03:00', '06:00', '09:00', '12:00', '15:00', '18:00', '21:00', '00:00']
+      };
+
+  Plotly.newPlot('plot', [...segs, legendProxy, hoverProxy, powerTrace, currentTimeMarker], {
     title: 'Brightness (CCT-colored) + Estimated Sun Power (Clear Sky)',
-    xaxis: {title:'Clock Time (hours)', range:[0,24], dtick:3},
+    xaxis: xaxisConfig,
     yaxis:  {title:'Brightness (%)', range:[0,105], autorange:false},
     yaxis2: {title:'Sun Power (W/m²)', overlaying:'y', side:'right', range:[0,1100]},
-    showlegend:true, legend:{x:0.02,y:0.98}, margin:{t:50}
+    showlegend:true, legend:{x:0.02,y:0.98}, margin:{t:50},
+    shapes: shapes,
+    annotations: annotations
   }, {responsive:true});
 }
 
@@ -328,6 +505,25 @@ function makePanel(){
     const out = document.createElement('span'); out.textContent = params.timezone;
     sel.onchange = e => { params.timezone = e.target.value; out.textContent = params.timezone; draw(); };
     panel.append(lab, sel, out);
+  }
+
+  // 12-hour format checkbox
+  {
+    const lab = document.createElement('label'); lab.textContent = '12-Hour Format (AM/PM)';
+    const checkboxContainer = document.createElement('div');
+    checkboxContainer.className = 'checkbox-label';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = params.use12Hour;
+    checkboxContainer.appendChild(chk);
+    const out = document.createElement('span'); 
+    out.textContent = params.use12Hour ? 'Enabled' : 'Disabled';
+    chk.onchange = e => { 
+      params.use12Hour = e.target.checked; 
+      out.textContent = params.use12Hour ? 'Enabled' : 'Disabled';
+      draw(); 
+    };
+    panel.append(lab, checkboxContainer, out);
   }
 }
 
