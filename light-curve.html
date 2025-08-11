@@ -154,18 +154,26 @@ function sunElevationDeg(clockHour, month, latDeg, lonDeg, tzName){
   return rad2deg(Math.asin(sinAlt));
 }
 
+// --- New helper for clear-sky power (W/m²) ---
+function clearSkyGHI(hour, month, latDeg, lonDeg, tzName){
+  const altDeg = sunElevationDeg(hour, month, latDeg, lonDeg, tzName);
+  if (altDeg <= 0) return 0;                      // sun below horizon
+  const cosZ = Math.sin(deg2rad(altDeg));         // cos(zenith) = sin(altitude)
+  return 1098 * cosZ * Math.exp(-0.059 / cosZ);   // Haurwitz model
+}
+
+// --- Replacement for compute() ---
 function compute(){
-  const hours=[], ccts=[], bris=[], sunEl=[];
+  const hours=[], ccts=[], bris=[], sunPower=[];
   const doy = doyForMonthMid(params.month);
   const utcOffset = utcOffsetFor(params.timezone, params.month);
 
   for (let hour=0; hour<=24; hour+=0.1){
-    // Use local solar time so the peak occurs at LST = 12 (solar noon)
+    // Drive curve with Local Solar Time for proper solar-noon alignment
     const lst = localSolarTimeHours(hour, utcOffset, params.longitude, doy);
 
-    // Same shape, just driven by LST instead of wall clock
-    const pos = timeToPos(lst);              // was: timeToPos(hour)
-    const t = (pos+1)*0.5;                   // 0..1
+    const pos = timeToPos(lst);
+    const t = (pos+1)*0.5;
 
     const tGammaCCT = Math.pow(t, params.gamma);
     const sCCT = smoothstep(tGammaCCT);
@@ -175,12 +183,12 @@ function compute(){
     const sB = smoothstep(tGammaB);
     const bri = params.min_brightness + sB*(params.max_brightness - params.min_brightness);
 
-    hours.push(hour);                         // keep X as CLOCK time for readability
+    hours.push(hour);  // keep clock time for X-axis
     ccts.push(cct);
     bris.push(bri);
-    sunEl.push(sunElevationDeg(hour, params.month, params.latitude, params.longitude, params.timezone));
+    sunPower.push(clearSkyGHI(hour, params.month, params.latitude, params.longitude, params.timezone));
   }
-  return {hours, ccts, bris, sunEl};
+  return {hours, ccts, bris, sunPower};
 }
 
 // Build many tiny line segments so each can be colorized by CCT
@@ -216,8 +224,8 @@ function enforceRanges(){
   params.month = Math.min(12, Math.max(1, Math.round(params.month)));
 }
 
-// Render
-function renderPlot(x, cct, bri, sunEl){
+// --- Replacement for renderPlot() ---
+function renderPlot(x, cct, bri, sunPower){
   const segs = buildBrightnessColoredByCCT(x, bri.map(v=>Math.round(v)), cct);
 
   // Legend proxy for the colored brightness line
@@ -228,41 +236,41 @@ function renderPlot(x, cct, bri, sunEl){
     hoverinfo:'skip', showlegend:true, yaxis:'y'
   };
 
-  // Transparent hover proxy to show CCT + Brightness at the exact mouse position
+  // Transparent hover proxy
   const hoverProxy = {
     type:'scatter', mode:'lines',
-    x: x,
-    y: bri,
+    x: x, y: bri,
     name: 'Brightness (hover)',
     line: {width: 10, color: 'rgba(0,0,0,0)'},
     hovertemplate: 'Hour %{x:.1f}<br>Brightness %{y:.0f}%<br>CCT %{customdata:.0f} K<extra></extra>',
-    customdata: cct, // expose CCT alongside brightness
+    customdata: cct,
     yaxis: 'y',
     showlegend: false
   };
 
-  const sunTrace = {
+  // Sun Power trace (W/m²)
+  const powerTrace = {
     type:'scatter', mode:'lines',
-    x: x, y: sunEl,
-    name: 'Sun Elevation (°)',
-    line: {width: 2, color: 'blue'},
+    x: x, y: sunPower,
+    name: 'Sun Power (W/m²)',
+    line: {width: 2, color: 'orange'},
     yaxis: 'y2',
-    hovertemplate: 'Hour %{x:.1f}<br>Sun %{y:.1f}°<extra></extra>'
+    hovertemplate: 'Hour %{x:.1f}<br>Sun Power %{y:.0f} W/m²<extra></extra>'
   };
 
-  Plotly.newPlot('plot', [...segs, legendProxy, hoverProxy, sunTrace], {
-    title: 'Brightness over Time (colored by CCT) + Sun Elevation (Lat/Lon & US TZ)',
+  Plotly.newPlot('plot', [...segs, legendProxy, hoverProxy, powerTrace], {
+    title: 'Brightness (CCT-colored) + Estimated Sun Power (Clear Sky)',
     xaxis: {title:'Clock Time (hours)', range:[0,24], dtick:3},
     yaxis:  {title:'Brightness (%)', range:[0,105], autorange:false},
-    yaxis2: {title:'Sun Elevation (°)', overlaying:'y', side:'right', range:[-10,90]},
+    yaxis2: {title:'Sun Power (W/m²)', overlaying:'y', side:'right', range:[0,1100]},
     showlegend:true, legend:{x:0.02,y:0.98}, margin:{t:50}
   }, {responsive:true});
 }
 
 function draw(){
   enforceRanges();
-  const {hours, ccts, bris, sunEl} = compute();
-  renderPlot(hours, ccts, bris, sunEl);
+  const {hours, ccts, bris, sunPower} = compute();  // <-- sunPower
+  renderPlot(hours, ccts, bris, sunPower);          // <-- pass sunPower
 }
 
 // Build controls
