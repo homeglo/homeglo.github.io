@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Adaptive Lighting – Brightness Colored by CCT + Sun (TZ dropdown + hover)</title>
+<title>Adaptive Lighting – Brightness Colored by CCT + Sun (fixed solar noon)</title>
 <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
 <style>
   body{font-family:sans-serif;margin:1.5rem;background:#f5f5f5;}
@@ -23,7 +23,7 @@
 <div class="container">
   <h2>Adaptive Lighting – Brightness Curve (Colorized by CCT)</h2>
   <div class="note">
-    Left Y-axis: Brightness (colored by CCT). Right Y-axis: Sun elevation (blue). Month is 1–12. Lat/Lon are text inputs. Time zone via dropdown (DST auto by month).
+    Brightness (left Y, colored by CCT) is mapped to solar elevation at your lat/lon. Sun elevation (right Y, blue). Month 1–12. Lat/Lon text inputs. US time zone dropdown (DST handled correctly).
   </div>
 
   <div id="plot" class="stage"></div>
@@ -42,13 +42,13 @@ const params = {
   max_brightness: 100,
   gamma: 2,
   gamma_bri: 1.5,
-  month: 7,            // 1..12 (default July)
-  latitude: 35.0,      // degrees (N + / S -)
-  longitude: -78.6,    // degrees (E + / W -)
+  month: 7,            // 1..12
+  latitude: 35.0,      // deg (N+, S-)
+  longitude: -78.6,    // deg (E+, W-)
   timezone: 'US/Eastern'
 };
 
-// Range sliders: [key, min, default, max, step, label]
+// Sliders: [key, min, def, max, step, label]
 const sliders = [
   ['min_color_temp', 500, 500, 6500, 50, 'Min CCT (K)'],
   ['max_color_temp', 500, 6500, 6500, 50, 'Max CCT (K)'],
@@ -59,7 +59,7 @@ const sliders = [
   ['month', 1, 7, 12, 1, 'Month (1–12)']
 ];
 
-// Text inputs (no sliders)
+// Text inputs
 const textInputs = [
   ['latitude',  'Latitude (°; N+, S-)'],
   ['longitude', 'Longitude (°; E+, W-)']
@@ -76,27 +76,76 @@ const TZ_OPTIONS = [
   {id:'US/Hawaii',   label:'US/Hawaii (no DST)'}
 ];
 
-// Compute UTC offset (hours) for given zone & month (mid-month rules)
-// DST months: Mar–Oct (3..10). Nov–Feb standard. Arizona/Hawaii never DST.
-function utcOffsetFor(zone, month){
-  const dst = (zone !== 'US/Arizona' && zone !== 'US/Hawaii') && (month >= 3 && month <= 10);
-  switch(zone){
-    case 'US/Eastern':  return dst ? -4 : -5;
-    case 'US/Central':  return dst ? -5 : -6;
-    case 'US/Mountain': return dst ? -6 : -7;
-    case 'US/Pacific':  return dst ? -7 : -8;
-    case 'US/Alaska':   return dst ? -8 : -9;
-    case 'US/Arizona':  return -7;
-    case 'US/Hawaii':   return -10;
-    default: return -5; // fallback Eastern
-  }
+// ------------------------- Solar helpers -----------------------------
+const CUM_DAYS = [0,31,59,90,120,151,181,212,243,273,304,334]; // non-leap
+function doyForMonthMid(m){ return CUM_DAYS[m-1] + 15; }
+
+function deg2rad(d){ return d * Math.PI / 180; }
+function rad2deg(r){ return r * 180 / Math.PI; }
+
+function solarDeclinationRad(doy){
+  const g = 2*Math.PI/365 * (doy - 1);
+  return 0.006918
+       - 0.399912*Math.cos(g) + 0.070257*Math.sin(g)
+       - 0.006758*Math.cos(2*g) + 0.000907*Math.sin(2*g)
+       - 0.002697*Math.cos(3*g) + 0.00148 *Math.sin(3*g);
+}
+function equationOfTimeMinutes(doy){
+  const B = 2*Math.PI*(doy - 81)/364;
+  return 9.87*Math.sin(2*B) - 7.53*Math.cos(B) - 1.5*Math.sin(B);
 }
 
-// ------------------------- Helpers ----------------------------------
-function smoothstep(x){ x = Math.max(0, Math.min(1, x)); return x*x*(3-2*x); }
-const timeToPos = h => -Math.cos((2*Math.PI*h)/24);
+// Standard vs DST offsets (hours)
+function standardOffset(zone){
+  switch(zone){
+    case 'US/Eastern':  return -5;
+    case 'US/Central':  return -6;
+    case 'US/Mountain': return -7;
+    case 'US/Pacific':  return -8;
+    case 'US/Alaska':   return -9;
+    case 'US/Arizona':  return -7;
+    case 'US/Hawaii':   return -10;
+    default: return -5;
+  }
+}
+function isDST(zone, month){
+  return (zone !== 'US/Arizona' && zone !== 'US/Hawaii') && (month >= 3 && month <= 10);
+}
+function currentOffset(zone, month){
+  const std = standardOffset(zone);
+  return isDST(zone, month) ? std + 1 : std;
+}
 
-// Approximate black-body CCT (K) to RGB (0-255)
+// Local Solar Time (hours) — IMPORTANT FIX:
+// 1) Convert local clock (possibly DST) -> local *standard* time
+// 2) Use LSTM from *standard* offset
+function localSolarTimeHours(clockHour, zone, month, longitude, doy){
+  const stdOff = standardOffset(zone);
+  const curOff = currentOffset(zone, month);
+  const clockStd = clockHour - (curOff - stdOff);   // subtract 1h during DST
+  const LSTM = 15 * stdOff;                         // standard meridian in degrees
+  const TC_min = equationOfTimeMinutes(doy) + 4*(longitude - LSTM);
+  return clockStd + TC_min/60;
+}
+function hourAngleRad(clockHour, zone, month, longitude, doy){
+  const LST = localSolarTimeHours(clockHour, zone, month, longitude, doy);
+  return deg2rad(15*(LST - 12));
+}
+function sunElevationDeg(clockHour, month, latDeg, lonDeg, zone){
+  const doy = doyForMonthMid(month);
+  const phi = deg2rad(latDeg);
+  const delta = solarDeclinationRad(doy);
+  const H = hourAngleRad(clockHour, zone, month, lonDeg, doy);
+  const sinAlt = Math.sin(phi)*Math.sin(delta) + Math.cos(phi)*Math.cos(delta)*Math.cos(H);
+  return rad2deg(Math.asin(sinAlt));
+}
+
+// -------------------- Curve mapping (lat/lon-aware) ------------------
+const ALT_NIGHT = -6;  // civil twilight end
+const ALT_DAY   = 60;  // full daylight reference
+function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+function smoothstep(x){ x = clamp01(x); return x*x*(3-2*x); }
+
 function cctToRGB(k){
   k = Math.max(500, Math.min(6500, k));
   let t = k/100, r,g,b;
@@ -110,74 +159,32 @@ function cctToRGB(k){
   return `rgb(${clamp(r)},${clamp(g)},${clamp(b)})`;
 }
 
-const CUM_DAYS = [0,31,59,90,120,151,181,212,243,273,304,334]; // start-of-month (non-leap)
-function doyForMonthMid(m){ return CUM_DAYS[m-1] + 15; } // m: 1..12
-
-function deg2rad(d){ return d * Math.PI / 180; }
-function rad2deg(r){ return r * 180 / Math.PI; }
-
-// Solar declination (radians)
-function solarDeclinationRad(doy){
-  const g = 2*Math.PI/365 * (doy - 1);
-  return 0.006918
-       - 0.399912*Math.cos(g) + 0.070257*Math.sin(g)
-       - 0.006758*Math.cos(2*g) + 0.000907*Math.sin(2*g)
-       - 0.002697*Math.cos(3*g) + 0.00148 *Math.sin(3*g);
-}
-
-// Equation of Time (minutes)
-function equationOfTimeMinutes(doy){
-  const B = 2*Math.PI*(doy - 81)/364;
-  return 9.87*Math.sin(2*B) - 7.53*Math.cos(B) - 1.5*Math.sin(B);
-}
-
-// Local Solar Time (hours)
-function localSolarTimeHours(clockHour, utcOffset, longitude, doy){
-  const LSTM = 15 * utcOffset;                          // meridian (deg)
-  const TC_min = equationOfTimeMinutes(doy) + 4*(longitude - LSTM); // minutes
-  return clockHour + TC_min/60;
-}
-
-function hourAngleRad(clockHour, utcOffset, longitude, doy){
-  const LST = localSolarTimeHours(clockHour, utcOffset, longitude, doy);
-  return deg2rad(15*(LST - 12));
-}
-
-// Sun elevation (degrees)
-function sunElevationDeg(clockHour, month, latDeg, lonDeg, tzName){
-  const doy = doyForMonthMid(month);
-  const utcOffset = utcOffsetFor(tzName, month);
-  const phi = deg2rad(latDeg);
-  const delta = solarDeclinationRad(doy);
-  const H = hourAngleRad(clockHour, utcOffset, lonDeg, doy);
-  const sinAlt = Math.sin(phi)*Math.sin(delta) + Math.cos(phi)*Math.cos(delta)*Math.cos(H);
-  return rad2deg(Math.asin(sinAlt));
-}
-
 // Compute curves
 function compute(){
   const hours=[], ccts=[], bris=[], sunEl=[];
   for (let hour=0; hour<=24; hour+=0.1){
-    const pos = timeToPos(hour);
-    const t = (pos+1)*0.5; // 0..1
+    const el = sunElevationDeg(hour, params.month, params.latitude, params.longitude, params.timezone);
+    sunEl.push(el);
 
-    const tGammaCCT = Math.pow(t, params.gamma);
+    const t_raw = (el - ALT_NIGHT) / (ALT_DAY - ALT_NIGHT);
+    const t_day = clamp01(t_raw);
+
+    const tGammaCCT = Math.pow(t_day, params.gamma);
     const sCCT = smoothstep(tGammaCCT);
     const cct = params.min_color_temp + sCCT*(params.max_color_temp - params.min_color_temp);
 
-    const tGammaB = Math.pow(t, params.gamma_bri);
+    const tGammaB = Math.pow(t_day, params.gamma_bri);
     const sB = smoothstep(tGammaB);
     const bri = params.min_brightness + sB*(params.max_brightness - params.min_brightness);
 
     hours.push(hour);
     ccts.push(cct);
     bris.push(bri);
-    sunEl.push(sunElevationDeg(hour, params.month, params.latitude, params.longitude, params.timezone));
   }
   return {hours, ccts, bris, sunEl};
 }
 
-// Build many tiny line segments so each can be colorized by CCT
+// Colored segments for brightness
 function buildBrightnessColoredByCCT(x, bri, cct){
   const segs = [];
   for (let i=1; i<x.length; i++){
@@ -190,7 +197,7 @@ function buildBrightnessColoredByCCT(x, bri, cct){
       line: {width: 4, color: cctToRGB(midCCT)},
       name: 'Brightness (%)',
       yaxis: 'y',
-      hoverinfo: 'skip', // hover is handled by a transparent proxy trace below
+      hoverinfo: 'skip',
       showlegend: false
     });
   }
@@ -206,7 +213,6 @@ function enforceRanges(){
     params.max_color_temp = tmp;
     warn.textContent = 'Note: Min CCT exceeded Max; values swapped.';
   }
-  // Clamp month to 1..12
   params.month = Math.min(12, Math.max(1, Math.round(params.month)));
 }
 
@@ -214,7 +220,6 @@ function enforceRanges(){
 function renderPlot(x, cct, bri, sunEl){
   const segs = buildBrightnessColoredByCCT(x, bri.map(v=>Math.round(v)), cct);
 
-  // Legend proxy for the colored brightness line
   const legendProxy = {
     type:'scatter', mode:'lines', x:[null], y:[null],
     name:'Brightness (%)',
@@ -222,7 +227,6 @@ function renderPlot(x, cct, bri, sunEl){
     hoverinfo:'skip', showlegend:true, yaxis:'y'
   };
 
-  // Transparent hover proxy to show CCT + Brightness at the exact mouse position
   const hoverProxy = {
     type:'scatter', mode:'lines',
     x: x,
@@ -230,7 +234,7 @@ function renderPlot(x, cct, bri, sunEl){
     name: 'Brightness (hover)',
     line: {width: 10, color: 'rgba(0,0,0,0)'},
     hovertemplate: 'Hour %{x:.1f}<br>Brightness %{y:.0f}%<br>CCT %{customdata:.0f} K<extra></extra>',
-    customdata: cct, // expose CCT alongside brightness
+    customdata: cct,
     yaxis: 'y',
     showlegend: false
   };
@@ -245,7 +249,7 @@ function renderPlot(x, cct, bri, sunEl){
   };
 
   Plotly.newPlot('plot', [...segs, legendProxy, hoverProxy, sunTrace], {
-    title: 'Brightness over Time (colored by CCT) + Sun Elevation (Lat/Lon & US TZ)',
+    title: 'Brightness over Time (colored by CCT) + Sun Elevation (correct solar noon)',
     xaxis: {title:'Clock Time (hours)', range:[0,24], dtick:3},
     yaxis:  {title:'Brightness (%)', range:[0,105], autorange:false},
     yaxis2: {title:'Sun Elevation (°)', overlaying:'y', side:'right', range:[-10,90]},
@@ -263,7 +267,6 @@ function draw(){
 function makePanel(){
   const panel = document.getElementById('ctrl-params');
 
-  // Range sliders
   sliders.forEach(([key, min, val, max, step, label]) => {
     const lab = document.createElement('label'); lab.textContent = label;
     const rng = document.createElement('input');
@@ -279,7 +282,6 @@ function makePanel(){
     params[key] = (key==='month') ? val|0 : val;
   });
 
-  // Text inputs for lat/lon
   textInputs.forEach(([key, label]) => {
     const lab = document.createElement('label'); lab.textContent = label;
     const txt = document.createElement('input');
@@ -293,7 +295,7 @@ function makePanel(){
         out.textContent = v;
         draw();
       } else {
-        txt.value = params[key]; // revert
+        txt.value = params[key];
       }
     };
     txt.onblur = commit;
