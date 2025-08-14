@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Home Glo designer</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg:#121212; --panel:#1e1e1e; --text:#fff; --muted:#b0b0b0; --grid:#444; --accent:#1e90ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+    margin: 1.5rem;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    background: var(--panel);
+    padding: 2rem;
+    border-radius: 12px;
+    box-shadow: 0 6px 30px rgba(0,0,0,.35);
+  }
+  h2 {
+    margin: 0 0 1rem 0;
+    color: #e0e0e0;
+    letter-spacing: .2px;
+  }
+  .group-title {
+    margin: 0 0 .75rem 0;
+    font-size: 1.2rem;
+    font-weight: 800;
+    letter-spacing: .4px;
+    color: #e5e5e5;
+    text-transform: capitalize;
+  }
+
+  /* Layout */
+  .top-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 1.5rem;
+  }
+  .stack { display: grid; gap: 16px; }
+  .panel {
+    background: #232323;
+    border: 1px solid #2b2b2b;
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .header-row {
+    display: flex; align-items: center; justify-content: space-between;
+    margin: 0 0 .5rem 0;
+  }
+  .panel .title {
+    font-weight: 800;
+    color: #e5e5e5;
+    margin: 0;
+    text-transform: capitalize;
+  }
+  .reset-btn {
+    background: transparent;
+    border: 1px solid #3a3a3a;
+    color: #ddd;
+    border-radius: 8px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .reset-btn:hover { border-color: var(--accent); color: #fff; }
+
+  /* Control rows */
+  .controls-3col {
+    display: grid;
+    grid-template-columns: 200px 1fr 110px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: .6rem;
+  }
+  .controls-1col {
+    display: grid;
+    grid-template-columns: 200px 1fr 110px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: .6rem;
+  }
+  label { font-size: .9rem; color: var(--muted); font-weight: 600; }
+
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  input[type=text] {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    background: #252525;
+    color: var(--text);
+  }
+  select {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid #3a3a3a;
+    border-radius: 8px;
+    background: #252525;
+    color: var(--text);
+  }
+  input[type=checkbox] { accent-color: var(--accent); }
+
+  /* Range (min/max) slider visuals */
+  .dual-range-container {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+  }
+  .dual-range-track {
+    position: relative; flex: 1; height: 6px; background: #444; border-radius: 3px;
+  }
+  .dual-range-container input[type=range] {
+    position: absolute; width: 100%; margin: 0; background: transparent;
+    -webkit-appearance: none; appearance: none; height: 6px; top: 0;
+  }
+  .dual-range-container input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 16px; height: 16px; background: var(--accent);
+    border-radius: 50%; cursor: pointer; position: relative; z-index: 2;
+  }
+  .dual-range-container input[type=range]::-moz-range-thumb {
+    width: 16px; height: 16px; background: var(--accent);
+    border-radius: 50%; cursor: pointer; position: relative; z-index: 2;
+  }
+  .dual-range-container input[type=range][id$="-min"] { z-index: 2; }
+  .dual-range-container input[type=range][id$="-max"] { z-index: 1; }
+  .range-fill {
+    position: absolute; top: 0; height: 6px; background: var(--accent); border-radius: 3px; z-index: 0;
+  }
+  .range-label { font-size: .85rem; color: #fff; width: 60px; text-align: center; }
+
+  .muted { color: var(--muted); }
+  .stage { margin: 1.2rem 0 1.5rem 0; }
+  .warn  { color: #ff7a7a; font-size: .85rem; }
+
+  /* Make the two range sliders each on their own full row even on narrow screens */
+  .ranges-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: .6rem;
+  }
+
+  /* Small screens */
+  @media (max-width: 900px) {
+    .top-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h2>Home Glo designer</h2>
+  <div id="plot" class="stage"></div>
+
+  <!-- Top: Morning (left) | Evening (right) -->
+  <div class="top-grid">
+    <!-- Morning column -->
+    <div>
+      <div class="group-title">Morning</div>
+      <div class="stack">
+        <div class="panel" id="morning-cct-panel">
+          <div class="header-row">
+            <div class="title">Color Temperature</div>
+            <button class="reset-btn" id="reset-m-cct">Reset</button>
+          </div>
+          <div class="controls-3col">
+            <label>Midpoint (tm)</label>
+            <input id="tm-m-cct" type="range" min="0" max="12" step="0.25" value="6">
+            <span id="tm-m-cct-value">6.00</span>
+          </div>
+          <div class="controls-3col">
+            <label>κ (steepness)</label>
+            <input id="kappa-m-cct" type="range" min="0.1" max="5.0" step="0.1" value="1">
+            <span id="kappa-m-cct-value">1.0</span>
+          </div>
+          <div class="controls-3col">
+            <label>α (decay)</label>
+            <input id="alpha-m-cct" type="range" min="0.005" max="0.1" step="0.005" value="0.02">
+            <span id="alpha-m-cct-value">0.02</span>
+          </div>
+          <div class="controls-3col">
+            <label>Offset</label>
+            <input id="offset-m-cct" type="range" min="-0.5" max="0.5" step="0.01" value="0">
+            <span id="offset-m-cct-value">0.00</span>
+          </div>
+          <div class="controls-3col">
+            <label>Gain</label>
+            <input id="gain-m-cct" type="range" min="0.5" max="2.0" step="0.05" value="1">
+            <span id="gain-m-cct-value">1.00</span>
+          </div>
+        </div>
+
+        <div class="panel" id="morning-bri-panel">
+          <div class="header-row">
+            <div class="title">Brightness</div>
+            <button class="reset-btn" id="reset-m-bri">Reset</button>
+          </div>
+          <div class="controls-3col">
+            <label>Midpoint (tm)</label>
+            <input id="tm-m-bri" type="range" min="0" max="12" step="0.25" value="6">
+            <span id="tm-m-bri-value">6.00</span>
+          </div>
+          <div class="controls-3col">
+            <label>κ (steepness)</label>
+            <input id="kappa-m-bri" type="range" min="0.1" max="5.0" step="0.1" value="1">
+            <span id="kappa-m-bri-value">1.0</span>
+          </div>
+          <div class="controls-3col">
+            <label>α (decay)</label>
+            <input id="alpha-m-bri" type="range" min="0.005" max="0.1" step="0.005" value="0.02">
+            <span id="alpha-m-bri-value">0.02</span>
+          </div>
+          <div class="controls-3col">
+            <label>Offset</label>
+            <input id="offset-m-bri" type="range" min="-0.5" max="0.5" step="0.01" value="0">
+            <span id="offset-m-bri-value">0.00</span>
+          </div>
+          <div class="controls-3col">
+            <label>Gain</label>
+            <input id="gain-m-bri" type="range" min="0.5" max="2.0" step="0.05" value="1">
+            <span id="gain-m-bri-value">1.00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Evening column -->
+    <div>
+      <div class="group-title">Evening</div>
+      <div class="stack">
+        <div class="panel" id="evening-cct-panel">
+          <div class="header-row">
+            <div class="title">Color Temperature</div>
+            <button class="reset-btn" id="reset-e-cct">Reset</button>
+          </div>
+          <div class="controls-3col">
+            <label>Midpoint (tm)</label>
+            <input id="tm-e-cct" type="range" min="0" max="12" step="0.25" value="6">
+            <span id="tm-e-cct-value">6.00</span>
+          </div>
+          <div class="controls-3col">
+            <label>κ (steepness)</label>
+            <input id="kappa-e-cct" type="range" min="0.1" max="5.0" step="0.1" value="1">
+            <span id="kappa-e-cct-value">1.0</span>
+          </div>
+          <div class="controls-3col">
+            <label>α (decay)</label>
+            <input id="alpha-e-cct" type="range" min="0.005" max="0.1" step="0.005" value="0.02">
+            <span id="alpha-e-cct-value">0.02</span>
+          </div>
+          <div class="controls-3col">
+            <label>Offset</label>
+            <input id="offset-e-cct" type="range" min="-0.5" max="0.5" step="0.01" value="0">
+            <span id="offset-e-cct-value">0.00</span>
+          </div>
+          <div class="controls-3col">
+            <label>Gain</label>
+            <input id="gain-e-cct" type="range" min="0.5" max="2.0" step="0.05" value="1">
+            <span id="gain-e-cct-value">1.00</span>
+          </div>
+        </div>
+
+        <div class="panel" id="evening-bri-panel">
+          <div class="header-row">
+            <div class="title">Brightness</div>
+            <button class="reset-btn" id="reset-e-bri">Reset</button>
+          </div>
+          <div class="controls-3col">
+            <label>Midpoint (tm)</label>
+            <input id="tm-e-bri" type="range" min="0" max="12" step="0.25" value="6">
+            <span id="tm-e-bri-value">6.00</span>
+          </div>
+          <div class="controls-3col">
+            <label>κ (steepness)</label>
+            <input id="kappa-e-bri" type="range" min="0.1" max="5.0" step="0.1" value="1">
+            <span id="kappa-e-bri-value">1.0</span>
+          </div>
+          <div class="controls-3col">
+            <label>α (decay)</label>
+            <input id="alpha-e-bri" type="range" min="0.005" max="0.1" step="0.005" value="0.02">
+            <span id="alpha-e-bri-value">0.02</span>
+          </div>
+          <div class="controls-3col">
+            <label>Offset</label>
+            <input id="offset-e-bri" type="range" min="-0.5" max="0.5" step="0.01" value="0">
+            <span id="offset-e-bri-value">0.00</span>
+          </div>
+          <div class="controls-3col">
+            <label>Gain</label>
+            <input id="gain-e-bri" type="range" min="0.5" max="2.0" step="0.05" value="1">
+            <span id="gain-e-bri-value">1.00</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="group-title">Ranges</div>
+  <div class="panel">
+    <div class="ranges-grid">
+      <div class="controls-1col">
+        <label>Color Temperature Range (K)</label>
+        <div class="dual-range-container">
+          <span id="min-temp-value" class="range-label">1600</span>
+          <div class="dual-range-track">
+            <input type="range" min="500" max="6500" step="50" value="1600" id="min-temp">
+            <input type="range" min="500" max="6500" step="50" value="6500" id="max-temp">
+            <div class="range-fill" id="temp-range-fill"></div>
+          </div>
+          <span id="max-temp-value" class="range-label">6500</span>
+        </div>
+        <span></span>
+      </div>
+
+      <div class="controls-1col">
+        <label>Brightness Range (%)</label>
+        <div class="dual-range-container">
+          <span id="min-intensity-value" class="range-label">1</span>
+          <div class="dual-range-track">
+            <input type="range" min="0" max="100" step="1" value="1" id="min-intensity">
+            <input type="range" min="0" max="100" step="1" value="100" id="max-intensity">
+            <div class="range-fill" id="intensity-range-fill"></div>
+          </div>
+          <span id="max-intensity-value" class="range-label">100</span>
+        </div>
+        <span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="group-title">Sun Position</div>
+  <div class="panel" id="sun-position">
+    <div class="controls-3col">
+      <label>Month (1–12)</label>
+      <input id="month" type="range" min="1" max="12" step="1">
+      <span id="month-value"></span>
+    </div>
+    <div class="controls-3col">
+      <label>Latitude (°; N+, S-)</label>
+      <input id="latitude" type="text">
+      <span id="latitude-value"></span>
+    </div>
+    <div class="controls-3col">
+      <label>Longitude (°; E+, W-)</label>
+      <input id="longitude" type="text">
+      <span id="longitude-value"></span>
+    </div>
+    <div class="controls-3col">
+      <label>US Time Zone</label>
+      <select id="timezone"></select>
+      <span id="timezone-value"></span>
+    </div>
+    <div class="controls-3col">
+      <label>12-Hour Format (AM/PM)</label>
+      <div><input id="use12" type="checkbox" checked></div>
+      <span id="use12-value">Enabled</span>
+    </div>
+  </div>
+
+  <div id="range-warn" class="warn"></div>
+</div>
+
+<script>
+/* ------------------- Parameters ------------------- */
+const params = {
+  // Ranges
+  min_color_temp: 1600, max_color_temp: 6500,
+  min_brightness: 1,    max_brightness: 100,
+
+  // Morning CCT
+  kappa_m_cct: 1.0, alpha_m_cct: 0.02, tm_m_cct: 6.0, offset_m_cct: 0.0, gain_m_cct: 1.0,
+  // Evening CCT
+  kappa_e_cct: 1.0, alpha_e_cct: 0.02, tm_e_cct: 6.0, offset_e_cct: 0.0, gain_e_cct: 1.0,
+
+  // Morning Brightness
+  kappa_m_bri: 1.0, alpha_m_bri: 0.02, tm_m_bri: 6.0, offset_m_bri: 0.0, gain_m_bri: 1.0,
+  // Evening Brightness
+  kappa_e_bri: 1.0, alpha_e_bri: 0.02, tm_e_bri: 6.0, offset_e_bri: 0.0, gain_e_bri: 1.0,
+
+  // Sun position
+  month: new Date().getMonth() + 1,
+  latitude: 35.0,
+  longitude: -78.6,
+  timezone: 'US/Eastern',
+  use12Hour: true
+};
+const DEF = { tm: 6.0, kappa: 1.0, alpha: 0.02, offset: 0.0, gain: 1.0 };
+
+/* ------------------- Sun/Solar helpers ------------------- */
+const TZ_OPTIONS = [
+  {id:'US/Eastern', label:'US/Eastern'},
+  {id:'US/Central', label:'US/Central'},
+  {id:'US/Mountain', label:'US/Mountain'},
+  {id:'US/Pacific', label:'US/Pacific'},
+  {id:'US/Alaska', label:'US/Alaska'},
+  {id:'US/Arizona', label:'US/Arizona (no DST)'},
+  {id:'US/Hawaii', label:'US/Hawaii (no DST)'}
+];
+function utcOffsetFor(zone, month){
+  const dst = (zone !== 'US/Arizona' && zone !== 'US/Hawaii') && (month >= 3 && month <= 10);
+  switch(zone){
+    case 'US/Eastern': return dst ? -4 : -5;
+    case 'US/Central': return dst ? -5 : -6;
+    case 'US/Mountain': return dst ? -6 : -7;
+    case 'US/Pacific': return dst ? -7 : -8;
+    case 'US/Alaska': return dst ? -8 : -9;
+    case 'US/Arizona': return -7;
+    case 'US/Hawaii': return -10;
+    default: return -5;
+  }
+}
+const CUM_DAYS = [0,31,59,90,120,151,181,212,243,273,304,334];
+function doyForMonthMid(m){ return CUM_DAYS[m-1] + 15; }
+function deg2rad(d){ return d * Math.PI / 180; }
+function rad2deg(r){ return r * 180 / Math.PI; }
+function solarDeclinationRad(doy){
+  const g = 2*Math.PI/365 * (doy - 1);
+  return 0.006918
+       - 0.399912*Math.cos(g) + 0.070257*Math.sin(g)
+       - 0.006758*Math.cos(2*g) + 0.000907*Math.sin(2*g)
+       - 0.002697*Math.cos(3*g) + 0.00148 *Math.sin(3*g);
+}
+function equationOfTimeMinutes(doy){
+  const B = 2*Math.PI*(doy - 81)/364;
+  return 9.87*Math.sin(2*B) - 7.53*Math.cos(B) - 1.5*Math.sin(B);
+}
+function localSolarTimeHours(clockHour, utcOffset, longitude, doy){
+  const LSTM = 15 * utcOffset;
+  const TC_min = equationOfTimeMinutes(doy) + 4*(longitude - LSTM);
+  return clockHour + TC_min/60;
+}
+function hourAngleRad(clockHour, utcOffset, longitude, doy){
+  const LST = localSolarTimeHours(clockHour, utcOffset, longitude, doy);
+  return deg2rad(15*(LST - 12));
+}
+function sunElevationDeg(clockHour, month, latDeg, lonDeg, tzName){
+  const doy = doyForMonthMid(month);
+  const utcOffset = utcOffsetFor(tzName, month);
+  const phi = deg2rad(latDeg);
+  const delta = solarDeclinationRad(doy);
+  const H = hourAngleRad(clockHour, utcOffset, lonDeg, doy);
+  const sinAlt = Math.sin(phi)*Math.sin(delta) + Math.cos(phi)*Math.cos(delta)*Math.cos(H);
+  return rad2deg(Math.asin(sinAlt));
+}
+function calculateSunTimes(month, latDeg, lonDeg, tzName){
+  const doy = doyForMonthMid(month);
+  const phi = deg2rad(latDeg);
+  const delta = solarDeclinationRad(doy);
+  const cosH = -Math.tan(phi) * Math.tan(delta);
+  const solarNoonLocalSolar = 12;
+  const utcOffset = utcOffsetFor(tzName, month);
+  const LSTM = 15 * utcOffset;
+  const TC_min = equationOfTimeMinutes(doy) + 4*(lonDeg - LSTM);
+  const solarNoon = solarNoonLocalSolar - TC_min/60;
+  const solarMidnight = (solarNoon + 12) % 24;
+  if (cosH > 1) return {sunrise: null, sunset: null, solarNoon, solarMidnight};
+  if (cosH < -1) return {sunrise: 0, sunset: 24, solarNoon, solarMidnight};
+  const H = rad2deg(Math.acos(cosH));
+  const sunriseLocalSolar = 12 - H/15;
+  const sunsetLocalSolar = 12 + H/15;
+  const sunrise = sunriseLocalSolar - TC_min/60;
+  const sunset = sunsetLocalSolar - TC_min/60;
+  return {sunrise, sunset, solarNoon, solarMidnight};
+}
+function clearSkyGHI(hour, month, latDeg, lonDeg, tzName){
+  const altDeg = sunElevationDeg(hour, month, latDeg, lonDeg, tzName);
+  if (altDeg <= 0) return null;
+  const cosZ = Math.sin(deg2rad(altDeg));
+  return 1098 * cosZ * Math.exp(-0.059 / cosZ) * 300 / 1098;
+}
+
+/* ------------------- Color & display helpers ------------------- */
+function cctToRGB(k){
+  k = Math.max(500, Math.min(6500, k));
+  let t = k/100, r,g,b;
+  if (t <= 66) r = 255; else r = 329.698727446 * Math.pow(t - 60, -0.1332047592);
+  if (t <= 66) g = 99.4708025861 * Math.log(t) - 161.1195681661;
+  else g = 288.1221695283 * Math.pow(t - 60, -0.0755148492);
+  if (t >= 66) b = 255;
+  else if (t <= 19) b = 0;
+  else b = 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+  const clamp = v => Math.max(0, Math.min(255, Math.round(v)));
+  return `rgb(${clamp(r)},${clamp(g)},${clamp(b)})`;
+}
+function sunPowerToRGB(power) {
+  if (power === null || power <= 0) return 'rgb(0,0,0)';
+  power = Math.min(power, 300);
+  if (power <= 2) return 'rgb(255,255,200)';
+  if (power <= 200) {
+    const t = (power - 2) / 198;
+    const b = Math.round(200 + t * 55);
+    return `rgb(255,255,${b})`;
+  }
+  const t = (power - 200) / 100;
+  const rg = Math.round(255 - t * 55);
+  return `rgb(${rg},${rg},255)`;
+}
+function formatTime(hour, use12Hour) {
+  let totalMinutes = Math.round(hour * 60);
+  let h = Math.floor(totalMinutes / 60);
+  let m = totalMinutes % 60;
+  if (m === 60) { h += 1; m = 0; }
+  if (!use12Hour) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  const ampm = h < 12 ? 'AM' : 'PM';
+  h = h % 12; if (h === 0) h = 12;
+  return `${h}:${String(m).padStart(2,'0')}${ampm}`;
+}
+
+/* ------------------- Core curve math (half-day locals) ------------------- */
+function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+function morning01(localT, {kappa, alpha, tm, offset, gain}) {
+  const logistic = 1 / (1 + Math.exp(-kappa * (localT - tm)));
+  const decay    = Math.exp(-alpha * Math.pow(12 - localT, 2));
+  return clamp01(offset + gain * logistic * decay);
+}
+function evening01(localT, {kappa, alpha, tm, offset, gain}) {
+  const logistic = 1 / (1 + Math.exp( kappa * (localT - tm)));
+  const decay    = Math.exp(-alpha * Math.pow(localT, 2));
+  return clamp01(offset + gain * logistic * decay);
+}
+/* Evaluate at arbitrary clock hour (0..24) */
+function evaluateAtHour(hour, sun, kind='bri'){
+  const {solarNoon, solarMidnight} = sun;
+  const forwardDist = (a,b)=> (a - b + 24) % 24;
+  const morningSpan = forwardDist(solarNoon, solarMidnight);
+  const dFromMidnight = forwardDist(hour, solarMidnight);
+  const inMorning = dFromMidnight <= morningSpan + 1e-6;
+
+  if (inMorning) {
+    const ratio = (morningSpan===0) ? 0 : dFromMidnight / morningSpan;
+    const tM = ratio * 12.0;
+    if (kind==='bri') {
+      const v01 = morning01(tM, {
+        kappa: params.kappa_m_bri, alpha: params.alpha_m_bri, tm: params.tm_m_bri,
+        offset: params.offset_m_bri, gain: params.gain_m_bri
+      });
+      return params.min_brightness + (params.max_brightness - params.min_brightness) * v01;
+    } else {
+      const v01 = morning01(tM, {
+        kappa: params.kappa_m_cct, alpha: params.alpha_m_cct, tm: params.tm_m_cct,
+        offset: params.offset_m_cct, gain: params.gain_m_cct
+      });
+      return params.min_color_temp + (params.max_color_temp - params.min_color_temp) * v01;
+    }
+  } else {
+    const eveningSpan = 24 - morningSpan;
+    const dFromNoon = forwardDist(hour, solarNoon);
+    const ratio = (eveningSpan===0) ? 0 : dFromNoon / eveningSpan;
+    const tE = ratio * 12.0;
+    if (kind==='bri') {
+      const v01 = evening01(tE, {
+        kappa: params.kappa_e_bri, alpha: params.alpha_e_bri, tm: params.tm_e_bri,
+        offset: params.offset_e_bri, gain: params.gain_e_bri
+      });
+      return params.min_brightness + (params.max_brightness - params.min_brightness) * v01;
+    } else {
+      const v01 = evening01(tE, {
+        kappa: params.kappa_e_cct, alpha: params.alpha_e_cct, tm: params.tm_e_cct,
+        offset: params.offset_e_cct, gain: params.gain_e_cct
+      });
+      return params.min_color_temp + (params.max_color_temp - params.min_color_temp) * v01;
+    }
+  }
+}
+
+/* ------------------- Compute sample arrays ------------------- */
+function compute(){
+  const sun = calculateSunTimes(params.month, params.latitude, params.longitude, params.timezone);
+  const {solarNoon, solarMidnight} = sun;
+
+  const hours = [], ccts = [], bris = [], sunPower = [];
+  const put = (h) => {
+    hours.push(h);
+    bris.push(evaluateAtHour(h, sun, 'bri'));
+    ccts.push(evaluateAtHour(h, sun, 'cct'));
+    sunPower.push(clearSkyGHI(h, params.month, params.latitude, params.longitude, params.timezone));
+  };
+
+  // Sample morning and evening
+  const forwardDist = (a,b)=> (a - b + 24) % 24;
+  const morningSpan = forwardDist(solarNoon, solarMidnight);
+  const eveningSpan = (24 - morningSpan);
+
+  const morningSamples = 121;
+  for (let i=0;i<morningSamples;i++){
+    const r = i/(morningSamples-1);
+    const h = (solarMidnight + r*morningSpan) % 24;
+    put(h);
+  }
+  const eveningSamples = 121;
+  for (let i=1;i<eveningSamples;i++){
+    const r = i/(eveningSamples-1);
+    const h = (solarNoon + r*eveningSpan) % 24;
+    put(h);
+  }
+
+  // Sort by hour for plotting & hover (prevents wrap artifacts)
+  const idx = hours.map((h,i)=>[h,i]).sort((a,b)=>a[0]-b[0]).map(p=>p[1]);
+  const hoursS = idx.map(i=>hours[i]);
+  const brisS  = idx.map(i=>bris[i]);
+  const cctsS  = idx.map(i=>ccts[i]);
+  const sunS   = idx.map(i=>sunPower[i]);
+  return {sun, hours: hoursS, bris: brisS, ccts: cctsS, sunPower: sunS};
+}
+
+/* ------------------- Plot ------------------- */
+function buildBrightnessColoredByCCT(x, bri, cct){
+  const segs = [];
+  for (let i=1; i<x.length; i++){
+    if (x[i] - x[i-1] > 2) continue;
+    const midCCT = (cct[i-1] + cct[i]) * 0.5;
+    segs.push({
+      type: 'scatter', mode: 'lines',
+      x: [x[i-1], x[i]], y: [bri[i-1], bri[i]],
+      line: {width: 4, color: cctToRGB(midCCT)},
+      name: 'Home Glo', yaxis: 'y', hoverinfo: 'skip', showlegend: false
+    });
+  }
+  return segs;
+}
+function buildSunPowerColored(x, sun){
+  const segs = [];
+  for (let i=1; i<x.length; i++){
+    if (x[i] - x[i-1] > 2) continue;
+    if (sun[i-1] === null || sun[i] === null) continue;
+    const midP = 0.5*(sun[i-1]+sun[i]);
+    segs.push({
+      type: 'scatter', mode: 'lines',
+      x: [x[i-1], x[i]], y: [sun[i-1], sun[i]],
+      line: {width: 1, color: sunPowerToRGB(midP), dash: 'dot'},
+      name: 'sunlight', yaxis: 'y', hoverinfo: 'skip', showlegend: false
+    });
+  }
+  return segs;
+}
+function renderPlot(sun, x, cct, bri, sunPwr){
+  const segs = buildBrightnessColoredByCCT(x, bri.map(v=>Math.round(v)), cct);
+  const sunSegs = buildSunPowerColored(x, sunPwr);
+
+  const legendProxyHome = { type:'scatter', mode:'lines', x:[null], y:[null],
+    name:'Home Glo', line:{width:4, color:'#ffffff'}, hoverinfo:'skip', showlegend:true, yaxis:'y' };
+  const legendProxySun = { type:'scatter', mode:'lines', x:[null], y:[null],
+    name:'sunlight', line:{width:1, color:'#ffffff', dash:'dot'}, hoverinfo:'skip', showlegend:true, yaxis:'y' };
+
+  const hoverProxy = {
+    type:'scatter', mode:'lines',
+    x, y:bri, name:'Home Glo (hover)',
+    line:{width:10, color:'rgba(0,0,0,0)'},
+    hovertemplate: params.use12Hour
+      ? '%{text}<br>Home Glo %{y:.0f}%<br>color temperature %{customdata:.0f} K<extra></extra>'
+      : 'time %{text}<br>Home Glo %{y:.0f}%<br>color temperature %{customdata:.0f} K<extra></extra>',
+    text: x.map(h=>formatTime(h, params.use12Hour)),
+    customdata: cct, yaxis:'y', showlegend:false
+  };
+  const powerHoverProxy = {
+    type:'scatter', mode:'lines',
+    x, y:sunPwr, name:'sunlight (hover)',
+    line:{width:10, color:'rgba(0,0,0,0)'},
+    hovertemplate: params.use12Hour
+      ? '%{text}<br>sunlight %{y:.0f} W/m²<extra></extra>'
+      : 'time %{text}<br>sunlight %{y:.0f} W/m²<extra></extra>',
+    text: x.map(h=>formatTime(h, params.use12Hour)),
+    yaxis:'y', showlegend:false
+  };
+
+  // Current time marker
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes()/60;
+  const currentBri = evaluateAtHour(currentHour, sun, 'bri');
+  const currentCCT = evaluateAtHour(currentHour, sun, 'cct');
+  const currentMarker = {
+    type:'scatter', mode:'markers', x:[currentHour], y:[currentBri], name:'current time',
+    marker:{ size:12, color:cctToRGB(currentCCT), line:{width:2, color:'#fff'} },
+    hovertemplate: 'current time: ' + formatTime(currentHour, params.use12Hour)
+      + '<br>Home Glo: %{y:.0f}%<br>color temperature: ' + Math.round(currentCCT) + ' K<extra></extra>',
+    yaxis:'y', showlegend:true
+  };
+
+  const {sunrise, sunset, solarNoon, solarMidnight} = sun;
+  const annotations = [];
+  function addAnn(xpos, label){
+    if (xpos !== null && xpos >=0 && xpos <=24){
+      annotations.push({
+        x:xpos, y:-0.15, yref:'paper', text: `${label}<br>${formatTime(xpos, params.use12Hour)}`,
+        showarrow:false, font:{size:10, color:'#fff'}, xanchor:'center', yanchor:'top'
+      });
+    }
+  }
+  addAnn(sunrise, 'sunrise'); addAnn(sunset, 'sunset');
+  addAnn(solarNoon, 'solar noon'); addAnn(solarMidnight, 'solar midnight');
+
+  const xaxisConfig = {
+    range:[0,24], tickmode:'array',
+    tickvals:[0,3,6,9,12,15,18,21,24],
+    ticktext: params.use12Hour ? ['12am','3am','6am','9am','12pm','3pm','6pm','9pm','12am']
+                               : ['00:00','03:00','06:00','09:00','12:00','15:00','18:00','21:00','00:00'],
+    titlefont:{color:'#fff'}, tickfont:{color:'#fff'},
+    showgrid:true, gridcolor:'#444',
+    minor:{ tickmode:'array', tickvals:Array.from({length:25},(_,i)=>i), ticks:'outside', ticklen:4, tickcolor:'#444', showgrid:true, minor_gridcolor:'#333' }
+  };
+
+  Plotly.newPlot('plot',
+    [...segs, legendProxyHome, legendProxySun, hoverProxy, powerHoverProxy, currentMarker, ...sunSegs],
+    {
+      xaxis: xaxisConfig,
+      yaxis: { title:'brightness', range:[0,300], autorange:false, titlefont:{color:'#fff'}, tickfont:{color:'#fff'}, showgrid:true, gridcolor:'#444' },
+      showlegend:true,
+      legend:{ x:0.02, y:0.98, font:{color:'#fff'}, bgcolor:'rgba(0,0,0,0.5)' },
+      margin:{t:50,b:100},
+      annotations,
+      paper_bgcolor:'#1e1e1e', plot_bgcolor:'#1e1e1e'
+    },
+    {responsive:true}
+  );
+}
+
+/* ------------------- UI wiring ------------------- */
+function enforceRanges(){
+  const warn = document.getElementById('range-warn'); warn.textContent = '';
+  if (params.min_color_temp > params.max_color_temp){
+    const tmp = params.min_color_temp;
+    params.min_color_temp = params.max_color_temp;
+    params.max_color_temp = tmp;
+    warn.textContent = 'Note: min color temperature exceeded max; values swapped.';
+    document.getElementById('min-temp').value = params.min_color_temp;
+    document.getElementById('max-temp').value = params.max_color_temp;
+    document.getElementById('min-temp-value').textContent = params.min_color_temp;
+    document.getElementById('max-temp-value').textContent = params.max_color_temp;
+    updateTempFill();
+  }
+  if (params.min_brightness > params.max_brightness){
+    const tmp = params.min_brightness;
+    params.min_brightness = params.max_brightness;
+    params.max_brightness = tmp;
+    warn.textContent += ' Note: min brightness exceeded max; values swapped.';
+    document.getElementById('min-intensity').value = params.min_brightness;
+    document.getElementById('max-intensity').value = params.max_brightness;
+    document.getElementById('min-intensity-value').textContent = params.min_brightness;
+    document.getElementById('max-intensity-value').textContent = params.max_brightness;
+    updateIntensityFill();
+  }
+  params.month = Math.min(12, Math.max(1, Math.round(params.month)));
+}
+function draw(){
+  enforceRanges();
+  const {sun, hours, ccts, bris, sunPower} = compute();
+  renderPlot(sun, hours, ccts, bris, sunPower);
+}
+function updateTempFill() {
+  const minVal = parseFloat(document.getElementById('min-temp').value);
+  const maxVal = parseFloat(document.getElementById('max-temp').value);
+  const rangeMin = 500, rangeMax = 6500;
+  const left = ((minVal - rangeMin) / (rangeMax - rangeMin)) * 100;
+  const width = ((maxVal - minVal) / (rangeMax - rangeMin)) * 100;
+  const fill = document.getElementById('temp-range-fill');
+  fill.style.left = `${left}%`; fill.style.width = `${width}%`;
+}
+function updateIntensityFill() {
+  const minVal = parseFloat(document.getElementById('min-intensity').value);
+  const maxVal = parseFloat(document.getElementById('max-intensity').value);
+  const rangeMin = 0, rangeMax = 100;
+  const left = ((minVal - rangeMin) / (rangeMax - rangeMin)) * 100;
+  const width = ((maxVal - minVal) / (rangeMax - rangeMin)) * 100;
+  const fill = document.getElementById('intensity-range-fill');
+  fill.style.left = `${left}%`; fill.style.width = `${width}%`;
+}
+
+/* Build and bind controls */
+(function initUI(){
+  // Sun position controls
+  document.getElementById('month').value = params.month;
+  document.getElementById('month-value').textContent = params.month;
+  document.getElementById('month').oninput = e => { params.month = parseInt(e.target.value,10); document.getElementById('month-value').textContent = params.month; draw(); };
+
+  const latInp = document.getElementById('latitude');
+  const lonInp = document.getElementById('longitude');
+  latInp.value = params.latitude; lonInp.value = params.longitude;
+  document.getElementById('latitude-value').textContent = params.latitude;
+  document.getElementById('longitude-value').textContent = params.longitude;
+  const commitTxt = (idKey, outId) => e=>{
+    const v = parseFloat(e.target.value);
+    if (!Number.isNaN(v)){ params[idKey] = v; document.getElementById(outId).textContent = v; draw(); }
+    else e.target.value = params[idKey];
+  };
+  latInp.onblur = commitTxt('latitude','latitude-value');
+  latInp.onkeydown = e => { if (e.key==='Enter') latInp.blur(); };
+  lonInp.onblur = commitTxt('longitude','longitude-value');
+  lonInp.onkeydown = e => { if (e.key==='Enter') lonInp.blur(); };
+
+  const tzSel = document.getElementById('timezone');
+  TZ_OPTIONS.forEach(opt=>{
+    const o=document.createElement('option'); o.value=opt.id; o.textContent=opt.label;
+    if (opt.id===params.timezone) o.selected=true; tzSel.appendChild(o);
+  });
+  document.getElementById('timezone-value').textContent = params.timezone;
+  tzSel.onchange = e => { params.timezone = e.target.value; document.getElementById('timezone-value').textContent = params.timezone; draw(); };
+
+  const chk12 = document.getElementById('use12');
+  chk12.checked = params.use12Hour;
+  chk12.onchange = e => { params.use12Hour = e.target.checked; document.getElementById('use12-value').textContent = params.use12Hour ? 'Enabled' : 'Disabled'; draw(); };
+
+  // Ranges dual sliders
+  const minTempInput = document.getElementById('min-temp');
+  const maxTempInput = document.getElementById('max-temp');
+  const minIntInput  = document.getElementById('min-intensity');
+  const maxIntInput  = document.getElementById('max-intensity');
+
+  minTempInput.oninput = e => {
+    const minVal = parseFloat(e.target.value);
+    const maxVal = parseFloat(maxTempInput.value);
+    params.min_color_temp = Math.min(minVal, maxVal - 50);
+    e.target.value = params.min_color_temp;
+    document.getElementById('min-temp-value').textContent = params.min_color_temp;
+    updateTempFill(); draw();
+  };
+  maxTempInput.oninput = e => {
+    const maxVal = parseFloat(e.target.value);
+    const minVal = parseFloat(minTempInput.value);
+    params.max_color_temp = Math.max(maxVal, minVal + 50);
+    e.target.value = params.max_color_temp;
+    document.getElementById('max-temp-value').textContent = params.max_color_temp;
+    updateTempFill(); draw();
+  };
+  minIntInput.oninput = e => {
+    const minVal = parseFloat(e.target.value);
+    const maxVal = parseFloat(maxIntInput.value);
+    params.min_brightness = Math.min(minVal, maxVal - 1);
+    e.target.value = params.min_brightness;
+    document.getElementById('min-intensity-value').textContent = params.min_brightness;
+    updateIntensityFill(); draw();
+  };
+  maxIntInput.oninput = e => {
+    const maxVal = parseFloat(e.target.value);
+    const minVal = parseFloat(minIntInput.value);
+    params.max_brightness = Math.max(maxVal, minVal + 1);
+    e.target.value = params.max_brightness;
+    document.getElementById('max-intensity-value').textContent = params.max_brightness;
+    updateIntensityFill(); draw();
+  };
+  updateTempFill(); updateIntensityFill();
+
+  // Helper to bind slider ↔ param ↔ readout
+  function bind(id, key, formatter=(v)=>v.toFixed(2)){
+    const el = document.getElementById(id);
+    const out = document.getElementById(id+'-value');
+    if (!el) return;
+    if (el.type === 'range') out.textContent = formatter(parseFloat(el.value));
+    el.oninput = e => {
+      const val = parseFloat(e.target.value);
+      params[key] = val;
+      out.textContent = formatter(val);
+      draw();
+    };
+  }
+
+  // Morning CCT
+  bind('tm-m-cct','tm_m_cct');
+  bind('kappa-m-cct','kappa_m_cct',v=>v.toFixed(1));
+  bind('alpha-m-cct','alpha_m_cct');
+  bind('offset-m-cct','offset_m_cct');
+  bind('gain-m-cct','gain_m_cct');
+
+  // Morning Brightness
+  bind('tm-m-bri','tm_m_bri');
+  bind('kappa-m-bri','kappa_m_bri',v=>v.toFixed(1));
+  bind('alpha-m-bri','alpha_m_bri');
+  bind('offset-m-bri','offset_m_bri');
+  bind('gain-m-bri','gain_m_bri');
+
+  // Evening CCT
+  bind('tm-e-cct','tm_e_cct');
+  bind('kappa-e-cct','kappa_e_cct',v=>v.toFixed(1));
+  bind('alpha-e-cct','alpha_e_cct');
+  bind('offset-e-cct','offset_e_cct');
+  bind('gain-e-cct','gain_e_cct');
+
+  // Evening Brightness
+  bind('tm-e-bri','tm_e_bri');
+  bind('kappa-e-bri','kappa_e_bri',v=>v.toFixed(1));
+  bind('alpha-e-bri','alpha_e_bri');
+  bind('offset-e-bri','offset_e_bri');
+  bind('gain-e-bri','gain_e_bri');
+
+  // Reset buttons (per subgroup)
+  function resetSection(prefix, def=DEF){
+    const fields = ['tm','kappa','alpha','offset','gain'];
+    fields.forEach(f=>{
+      const id = `${f}-${prefix}`;
+      const el = document.getElementById(id);
+      if (el){
+        el.value = def[f];
+        const out = document.getElementById(id+'-value');
+        if (out){
+          const fmt = (f==='kappa') ? def[f].toFixed(1) : def[f].toFixed(2);
+          out.textContent = fmt;
+        }
+      }
+      const key = `${f}_${prefix.replace(/-/g,'_')}`;
+      params[key] = def[f];
+    });
+    draw();
+  }
+  document.getElementById('reset-m-cct').onclick = ()=>resetSection('m-cct');
+  document.getElementById('reset-m-bri').onclick = ()=>resetSection('m-bri');
+  document.getElementById('reset-e-cct').onclick = ()=>resetSection('e-cct');
+  document.getElementById('reset-e-bri').onclick = ()=>resetSection('e-bri');
+
+  // Initialize displayed values
+  document.getElementById('month').dispatchEvent(new Event('input'));
+})();
+
+draw();
+</script>
+</body>
+</html>
