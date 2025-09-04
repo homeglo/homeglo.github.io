@@ -787,7 +787,8 @@ function addSliderRow(parent,{ label, key, min, max, step, format, def, syncKeys
 
   const pin = document.createElement('div');
   pin.style.position = 'absolute'; pin.style.top = '50%'; pin.style.transform = 'translate(-50%, -50%)';
-  pin.style.width = '2px'; pin.style.height = '12px'; pin.style.background = 'rgba(255,255,255,0.7)'; pin.style.borderRadius = '1px'; pin.style.pointerEvents = 'none';
+  pin.style.width = '2px'; pin.style.height = '12px'; pin.style.background = '#6b6f76'; // medium-dark grey hash mark
+  pin.style.borderRadius = '1px'; pin.style.pointerEvents = 'none';
   trackWrap.appendChild(input); trackWrap.appendChild(pin);
 
   const val = document.createElement('div'); val.className = 'value';
